@@ -133,15 +133,16 @@ const Tab5: React.FC<Tab5Props> = ({
     setIsLoading(true);
     setLoadingProgress(0);
 
-    // Hiệu ứng tăng phần trăm giả lập
+    // Hiệu ứng tăng phần trăm giả lập - chậm hơn vì tạo 3 đề lần lượt
     const progressInterval = setInterval(() => {
       setLoadingProgress(prev => {
-        if (prev >= 95) return prev;
-        const remaining = 95 - prev;
-        const step = Math.max(1, Math.floor(remaining * 0.08));
-        return prev + (Math.random() < 0.5 ? step : 0);
+        if (prev >= 97) return prev;
+        const remaining = 97 - prev;
+        // Tăng chậm hơn để phù hợp với thời gian tạo 3 đề tuần tự
+        const step = Math.max(0.5, remaining * 0.04);
+        return prev + (Math.random() < 0.6 ? step : 0);
       });
-    }, 900);
+    }, 1200);
 
 
     try {
