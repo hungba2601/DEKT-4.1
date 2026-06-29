@@ -121,6 +121,16 @@ const App: React.FC = () => {
     }
   };
 
+  const handleCloseApiKeyModal = () => {
+    setIsApiKeyModalOpen(false);
+    setIsQuotaExceeded(false);
+    // Hủy bỏ trạng thái chờ nếu người dùng đóng modal mà không nhập key
+    if (quotaExceededResolvers.current.length > 0) {
+      quotaExceededResolvers.current.forEach(resolve => resolve('')); // Trả về chuỗi rỗng để báo hủy
+      quotaExceededResolvers.current = [];
+    }
+  };
+
   // Bỏ logic đồng bộ hóa người dùng cũ vì đã dùng Google Sheet
   useEffect(() => {
     // Chỉ setAuthStatus ban đầu
@@ -396,6 +406,7 @@ const App: React.FC = () => {
             examTemplateContent={examTemplateContent}
             setExamTemplateContent={setExamTemplateContent}
             sgkFileContent={sgkFileContent}
+            matrixConfig={matrixConfig}
           />
         );
       case 'tab7':
@@ -427,7 +438,7 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-transparent text-gray-800 dark:text-gray-200">
       <header className="bg-white dark:bg-gray-800 shadow-md dark:shadow-lg sticky top-0 z-20">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="w-full max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="py-4 flex items-center justify-between">
             <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-red-600 dark:text-red-500">
               APP TẠO ĐỀ KIỂM TRA + MA TRẬN ĐẶC TẢ CV 7991 (AI) VER 3.1
@@ -506,7 +517,7 @@ const App: React.FC = () => {
       </header>
 
       <main>
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="w-full max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {isLoading && (
             <div className="fixed inset-0 bg-black bg-opacity-70 z-50 flex flex-col items-center justify-center p-4">
               <svg className="animate-spin h-12 w-12 text-white mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -534,10 +545,7 @@ const App: React.FC = () => {
         />
         <ApiKeyModal
           isOpen={isApiKeyModalOpen}
-          onClose={() => {
-            setIsApiKeyModalOpen(false);
-            setIsQuotaExceeded(false);
-          }}
+          onClose={handleCloseApiKeyModal}
           onSave={handleSaveApiKey}
           currentKey={apiKey}
           isQuotaExceeded={isQuotaExceeded}
