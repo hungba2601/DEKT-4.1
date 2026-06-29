@@ -677,7 +677,7 @@ const generateSingleExam = async (
         --- QUY TẮC TẠO ĐỀ (BẮT BUỘC) ---
         1.  **TUÂN THỦ MA TRẬN:** Đề thi phải tuân thủ CHÍNH XÁC 100% về số lượng câu hỏi, điểm số, và mức độ nhận thức như ma trận.
         2.  **4 ĐÁP ÁN TRẮC NGHIỆM (CỰC KỲ QUAN TRỌNG):** Mỗi câu hỏi trắc nghiệm nhiều phương án lựa chọn **BẮT BUỘC PHẢI CÓ ĐỦ 4 PHƯƠNG ÁN A, B, C, D**. Tuyệt đối không được thiếu phương án nào.
-        3.  **BẢO TOÀN SỐ Ý CÂU ĐÚNG/SAI (CỰC KỲ QUAN TRỌNG):** Mỗi câu hỏi Đúng/Sai PHẢI có chính xác **${soYTrongCauDungSai} ý nhỏ** (a, b, c, d...). Giữ nguyên CẤU TRÚC và SỐ LƯỢNG ý nhỏ của các câu hỏi Đúng/Sai từ Ngân hàng câu hỏi. TUYỆT ĐỐI KHÔNG được tự ý cắt xén, rút gọn số lượng ý của câu hỏi Đúng/Sai xuống còn 2 ý.
+        3.  **BẢO TOÀN SỐ Ý CÂU ĐÚNG/SAI (CỰC KỲ QUAN TRỌNG):** Mỗi câu hỏi Đúng/Sai PHẢI có chính xác **${soYTrongCauDungSai} ý nhỏ** (a, b, c, d...). Giữ nguyên CẤU TRÚC và SỐ LƯỢNG ý nhỏ của các câu hỏi Đúng/Sai từ Ngân hàng câu hỏi. LƯU Ý: Các ý nhỏ trong Ngân hàng câu hỏi đã có sẵn chữ cái "a. ", "b. ", "c. " ở đầu câu. Khi sao chép vào đề thi, TUYỆT ĐỐI KHÔNG được thêm một chữ cái "a. " hay "b. " nào nữa vào trước nó để tránh lỗi lặp chữ (ví dụ lỗi sai: "a. a. Máy tính...", lỗi đúng: "a. Máy tính...").
         4.  **XÁO TRỘN ĐÁP ÁN ĐÚNG (CỰC KỲ QUAN TRỌNG):** Đối với các câu trắc nghiệm, bạn PHẢI xáo trộn vị trí đáp án đúng một cách ngẫu nhiên tuyệt đối giữa A, B, C, D. 
         5.  **PHÂN BỔ ĐÁP ÁN ĐỀU:** Đảm bảo số lượng đáp án đúng là A, B, C, D trong toàn bộ đề thi phải xấp xỉ bằng nhau (ví dụ: mỗi loại chiếm khoảng 25%). TUYỆT ĐỐI không để một chữ cái nào (như B) xuất hiện áp đảo.
         6.  **QUY TẮC VỀ KÝ HIỆU TOÁN HỌC:** Chỉ sử dụng LaTeX ($...$ hoặc $$...$$) cho công thức. Không dùng $ cho văn bản thường.
