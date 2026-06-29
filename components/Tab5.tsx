@@ -12,6 +12,7 @@ interface Tab5Props {
   examTemplateContent: string;
   setExamTemplateContent: (content: string) => void;
   sgkFileContent: string;
+  matrixConfig: any; // Add matrixConfig
 }
 
 // Make renderMathInElement globally available for TypeScript
@@ -29,7 +30,8 @@ const Tab5: React.FC<Tab5Props> = ({
   setExamPapers,
   examTemplateContent,
   setExamTemplateContent,
-  sgkFileContent
+  sgkFileContent,
+  matrixConfig
 }) => {
   const [reviewFileContent, setReviewFileContent] = useState<string>('');
   const [reviewFileStatus, setReviewFileStatus] = useState<'idle' | 'parsing' | 'success' | 'error'>('idle');
@@ -138,12 +140,11 @@ const Tab5: React.FC<Tab5Props> = ({
       setLoadingProgress(prev => {
         if (prev >= 97) return prev;
         const remaining = 97 - prev;
-        // Tăng chậm hơn để phù hợp với thời gian tạo 3 đề tuần tự
-        const step = Math.max(0.5, remaining * 0.04);
+        // Tăng nhanh hơn một chút vì chỉ tạo 2 đề
+        const step = Math.max(0.5, remaining * 0.05);
         return prev + (Math.random() < 0.6 ? step : 0);
       });
     }, 1200);
-
 
     try {
       const result = await generateExams(
@@ -151,7 +152,10 @@ const Tab5: React.FC<Tab5Props> = ({
         generatedMatrix,
         sgkFileContent,
         similarityPercentage,
-        examTemplateContent
+        examTemplateContent,
+        1,
+        2,
+        matrixConfig?.soYTrongCauDungSai || 4
       );
 
       clearInterval(progressInterval);
@@ -159,6 +163,56 @@ const Tab5: React.FC<Tab5Props> = ({
 
       setTimeout(() => {
         setExamPapers(result);
+        setIsLoading(false);
+      }, 500);
+
+    } catch (error) {
+      clearInterval(progressInterval);
+      console.error(error);
+      alert(error instanceof Error ? error.message : "Có lỗi không xác định xảy ra. Vui lòng thử lại.");
+      setIsLoading(false);
+    }
+  };
+
+  const handleGenerateThirdExam = async () => {
+    if (!reviewFileContent) {
+      alert("Vui lòng tải lên file câu hỏi ôn tập trước khi tạo đề 3.");
+      return;
+    }
+    if (!generatedMatrix) {
+      alert("Không tìm thấy ma trận. Vui lòng quay lại tab Ma trận để tạo.");
+      return;
+    }
+    
+    setIsLoading(true);
+    setLoadingProgress(0);
+
+    const progressInterval = setInterval(() => {
+      setLoadingProgress(prev => {
+        if (prev >= 97) return prev;
+        const remaining = 97 - prev;
+        const step = Math.max(0.5, remaining * 0.08); // Nhanh hơn vì chỉ tạo 1 đề
+        return prev + (Math.random() < 0.6 ? step : 0);
+      });
+    }, 1200);
+
+    try {
+      const result = await generateExams(
+        reviewFileContent,
+        generatedMatrix,
+        sgkFileContent,
+        similarityPercentage,
+        examTemplateContent,
+        3,
+        1,
+        matrixConfig?.soYTrongCauDungSai || 4
+      );
+
+      clearInterval(progressInterval);
+      setLoadingProgress(100);
+
+      setTimeout(() => {
+        setExamPapers([...examPapers, ...result]);
         setIsLoading(false);
       }, 500);
 
@@ -260,24 +314,33 @@ const Tab5: React.FC<Tab5Props> = ({
             </p>
           </div>
         </div>
-        <div className="flex items-center justify-center md:col-span-1">
+        <div className="flex flex-col items-center justify-center md:col-span-1 space-y-4">
           <button
             onClick={handleGenerate}
             disabled={!reviewFileContent || !generatedMatrix}
-            className={`w-full md:w-auto text-white font-bold py-3 px-6 rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed ${isFirstGeneration
+            className={`w-full text-white font-bold py-3 px-6 rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed ${isFirstGeneration
                 ? 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'
                 : 'bg-purple-600 hover:bg-purple-700 focus:ring-purple-500'
               }`}
           >
-            {isFirstGeneration ? 'Tạo 3 Đề Thi' : 'Tạo lại 3 đề khác'}
+            {isFirstGeneration ? 'Tạo 2 Đề Thi Trước' : 'Tạo lại 2 đề khác'}
           </button>
+          
+          {examPapers.length === 2 && (
+            <button
+              onClick={handleGenerateThirdExam}
+              className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors"
+            >
+              Tạo đề 3 tiếp theo
+            </button>
+          )}
         </div>
       </div>
 
       {examPapers.length > 0 ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {examPapers.map((paper, index) => (
-            <div key={index} className="relative border border-gray-200 dark:border-gray-700 rounded-lg flex flex-col">
+            <div key={index} className="relative border border-gray-200 dark:border-gray-700 rounded-lg flex flex-col min-w-0 overflow-hidden">
               <div className="p-4 bg-gray-100 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
                 <h3 className="text-lg sm:text-xl font-bold text-gray-800 dark:text-gray-200">Đề số {index + 1}</h3>
                 <button
@@ -290,7 +353,7 @@ const Tab5: React.FC<Tab5Props> = ({
               <div
                 // Fix: Changed ref callback to not return a value, which is required for ref callbacks.
                 ref={el => { paperRefs.current[index] = el; }}
-                className="p-4 prose dark:prose-invert max-w-none font-sans text-base bg-white dark:bg-gray-800 rounded-b-lg flex-grow overflow-x-auto"
+                className="p-4 prose dark:prose-invert max-w-none font-sans text-base bg-white dark:bg-gray-800 rounded-b-lg flex-grow overflow-x-auto break-words"
                 dangerouslySetInnerHTML={{ __html: paper }}
               >
               </div>
@@ -304,7 +367,7 @@ const Tab5: React.FC<Tab5Props> = ({
           </svg>
           <h3 className="mt-2 text-lg font-medium text-gray-900 dark:text-gray-200">Chưa có đề thi</h3>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Tải lên file câu hỏi và nhấn "Tạo 3 Đề Thi".
+            Tải lên file câu hỏi và nhấn "Tạo 2 Đề Thi Trước", sau đó có thể tạo thêm đề 3.
           </p>
         </div>
       )}
