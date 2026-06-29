@@ -30,14 +30,112 @@ const getAiClient = () => {
  * @param text The raw string response from the AI.
  * @returns The extracted JSON string, or null if no valid JSON object is found.
  */
-const extractJson = (text: string): string | null => {
-  // This regex finds the first '{' and the last '}' in the string, capturing everything in between.
-  // It's greedy and designed to handle nested objects/arrays within the main JSON structure.
-  const jsonRegex = /\{[\s\S]*\}/;
-  const match = text.match(jsonRegex);
-  if (match) {
-    return match[0];
+/**
+ * Sanitize a JSON string to fix common issues from AI responses.
+ * Fixes unescaped control characters (newlines, tabs, etc.) inside JSON string values.
+ */
+const sanitizeJsonString = (text: string): string => {
+  // Fix unescaped control characters inside JSON string values
+  // This replaces literal newlines/tabs/carriage returns inside strings with their escaped versions
+  let result = '';
+  let inString = false;
+  let escapeNext = false;
+  
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    
+    if (escapeNext) {
+      result += char;
+      escapeNext = false;
+      continue;
+    }
+    
+    if (char === '\\' && inString) {
+      result += char;
+      escapeNext = true;
+      continue;
+    }
+    
+    if (char === '"') {
+      inString = !inString;
+      result += char;
+      continue;
+    }
+    
+    if (inString) {
+      // Replace unescaped control characters inside strings
+      if (char === '\n') { result += '\\n'; continue; }
+      if (char === '\r') { result += '\\r'; continue; }
+      if (char === '\t') { result += '\\t'; continue; }
+      // Replace other control characters
+      const code = char.charCodeAt(0);
+      if (code < 32) { result += ' '; continue; }
+    }
+    
+    result += char;
   }
+  
+  return result;
+};
+
+/**
+ * Extracts and parses a JSON object from a string that might contain other text.
+ * Tries multiple strategies for robustness.
+ */
+const extractJson = (text: string): string | null => {
+  if (!text || text.trim().length === 0) return null;
+  
+  // Strategy 1: Try to parse the text directly (best case - AI returned clean JSON)
+  try {
+    JSON.parse(text);
+    return text;
+  } catch (e) { /* continue to next strategy */ }
+  
+  // Strategy 2: Try sanitizing the full text first
+  try {
+    const sanitized = sanitizeJsonString(text);
+    JSON.parse(sanitized);
+    return sanitized;
+  } catch (e) { /* continue to next strategy */ }
+  
+  // Strategy 3: Extract JSON block between first { and last }
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    const extracted = text.substring(firstBrace, lastBrace + 1);
+    
+    // Try direct parse
+    try {
+      JSON.parse(extracted);
+      return extracted;
+    } catch (e) { /* try sanitized */ }
+    
+    // Try sanitized parse
+    try {
+      const sanitized = sanitizeJsonString(extracted);
+      JSON.parse(sanitized);
+      return sanitized;
+    } catch (e) { /* continue to next strategy */ }
+  }
+  
+  // Strategy 4: Try to extract from markdown code block ```json ... ```
+  const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)```/;
+  const codeMatch = text.match(codeBlockRegex);
+  if (codeMatch && codeMatch[1]) {
+    const codeContent = codeMatch[1].trim();
+    try {
+      const sanitized = sanitizeJsonString(codeContent);
+      JSON.parse(sanitized);
+      return sanitized;
+    } catch (e) { /* all strategies failed */ }
+  }
+  
+  // Fallback: return the extracted block even if we couldn't parse it
+  // (let the caller handle the parse error with a better error message)
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    return sanitizeJsonString(text.substring(firstBrace, lastBrace + 1));
+  }
+  
   return null;
 };
 
@@ -336,36 +434,77 @@ export const generateMatrixAndSpec = async (
     }
   `;
 
-  // --- SỬ DỤNG callWithRetry ---
-  const response = await callWithRetry<GenerateContentResponse>(() => 
-    getAiClient().models.generateContent({
-      model,
-      contents: prompt,
-      config: { responseMimeType: "application/json" }
-    })
-  );
+  // --- HÀM GỌI AI VÀ PARSE JSON (CÓ TỰ ĐỘNG THỬ LẠI KHI LỖI JSON) ---
+  const maxJsonRetries = 2; // Thử tối đa 2 lần nếu lỗi JSON
+  let lastError: Error | null = null;
 
-  const text = response.text || "";
-  const jsonString = extractJson(text);
+  for (let attempt = 1; attempt <= maxJsonRetries; attempt++) {
+    try {
+      console.log(`Gọi AI tạo ma trận (lần ${attempt}/${maxJsonRetries})...`);
+      
+      const response = await callWithRetry<GenerateContentResponse>(() => 
+        getAiClient().models.generateContent({
+          model,
+          contents: attempt === 1 ? prompt : prompt + '\n\n**LƯU Ý QUAN TRỌNG:** Phản hồi của bạn PHẢI là JSON thuần túy, hợp lệ. KHÔNG được có ký tự xuống dòng thực (literal newline) bên trong chuỗi JSON. Hãy sử dụng \\n thay cho xuống dòng trong các giá trị chuỗi. KHÔNG sử dụng markdown code block.',
+          config: { responseMimeType: "application/json" }
+        })
+      );
 
-  if (!jsonString) {
-    console.error("Failed to extract JSON from response:", text);
-    throw new Error("AI không trả về dữ liệu JSON hợp lệ. Vui lòng thử lại.");
-  }
+      const text = response.text || "";
+      
+      if (!text.trim()) {
+        console.error(`Lần ${attempt}: AI trả về phản hồi rỗng.`);
+        lastError = new Error("AI trả về phản hồi rỗng. Vui lòng thử lại.");
+        if (attempt < maxJsonRetries) { await wait(2000); continue; }
+        throw lastError;
+      }
 
-  try {
-    const parsed = JSON.parse(jsonString);
-    if (!parsed.matrix || !Array.isArray(parsed.spec)) {
-      throw new Error("Dữ liệu JSON từ AI thiếu các trường bắt buộc 'matrix' hoặc 'spec'.");
+      const jsonString = extractJson(text);
+
+      if (!jsonString) {
+        console.error(`Lần ${attempt}: Không thể trích xuất JSON từ phản hồi:`, text.substring(0, 500));
+        lastError = new Error("AI không trả về dữ liệu JSON hợp lệ. Vui lòng thử lại.");
+        if (attempt < maxJsonRetries) { await wait(2000); continue; }
+        throw lastError;
+      }
+
+      const parsed = JSON.parse(jsonString);
+      
+      if (!parsed.matrix || !Array.isArray(parsed.spec)) {
+        console.error(`Lần ${attempt}: JSON thiếu trường bắt buộc. Keys:`, Object.keys(parsed));
+        lastError = new Error("Dữ liệu JSON từ AI thiếu các trường bắt buộc 'matrix' hoặc 'spec'.");
+        if (attempt < maxJsonRetries) { await wait(2000); continue; }
+        throw lastError;
+      }
+
+      console.log('Đã parse JSON ma trận thành công.');
+      return {
+        matrix: parsed.matrix,
+        spec: parsed.spec,
+      };
+
+    } catch (e: any) {
+      const isJsonError = e instanceof SyntaxError || 
+                          (e.message && e.message.includes('JSON'));
+      
+      if (isJsonError && attempt < maxJsonRetries) {
+        console.warn(`Lần ${attempt}: Lỗi JSON, đang thử lại...`, e.message);
+        lastError = e;
+        await wait(2000);
+        continue;
+      }
+      
+      // Nếu không phải lỗi JSON hoặc đã hết lần thử -> throw
+      console.error(`Lỗi khi tạo ma trận (lần ${attempt}):`, e.message);
+      if (e instanceof SyntaxError) {
+        throw new Error("AI trả về JSON không hợp lệ sau nhiều lần thử. Vui lòng thử lại hoặc đổi API Key.");
+      }
+      throw e;
     }
-    return {
-      matrix: parsed.matrix,
-      spec: parsed.spec,
-    };
-  } catch (e) {
-    console.error("Failed to parse JSON response:", jsonString);
-    throw new Error("Lỗi khi phân tích dữ liệu JSON từ AI.");
   }
+
+  // Fallback (should not reach here)
+  throw lastError || new Error("Lỗi không xác định khi tạo ma trận.");
 };
 
 export const generateReviewQuestions = async (
@@ -557,10 +696,18 @@ const generateSingleExam = async (
 
   const text = response.text || "";
   const jsonString = extractJson(text);
-  if (!jsonString) throw new Error(`Lỗi giải mã JSON cho đề số ${index}`);
+  if (!jsonString) {
+    console.error(`Đề số ${index}: Không trích xuất được JSON từ phản hồi AI.`);
+    throw new Error(`Lỗi giải mã JSON cho đề số ${index}. Vui lòng thử lại.`);
+  }
 
-  const parsed = JSON.parse(jsonString);
-  return parsed.exam || "";
+  try {
+    const parsed = JSON.parse(jsonString);
+    return parsed.exam || "";
+  } catch (e) {
+    console.error(`Đề số ${index}: Lỗi parse JSON:`, e);
+    throw new Error(`Lỗi phân tích JSON cho đề số ${index}. Vui lòng thử lại.`);
+  }
 };
 
 export const generateExams = async (
@@ -574,20 +721,19 @@ export const generateExams = async (
   const matrixText = `--- BẮT ĐẦU MA TRẬN ---\n${matrix}\n--- KẾT THÚC MA TRẬN ---`;
   const sgkText = fileToText(sgkFileContent, "Sách giáo khoa (Nguồn bổ sung)");
 
-  console.log("Bắt đầu tạo 3 đề thi...");
+  console.log("Bắt đầu tạo 3 đề thi tuần tự...");
 
-  // Tạo 3 đề lần lượt để tránh quá tải token và đảm bảo chất lượng
+  // Tạo 3 đề lần lượt (tuần tự) để tránh quá tải API và đảm bảo chất lượng
   const exams: string[] = [];
-
-  // Vì callWithRetry đã có cơ chế chờ, ta thử dùng Promise.all để tối ưu thời gian.
-  const promises = [1, 2, 3].map(i => generateSingleExam(i, reviewText, matrixText, sgkText, similarityPercentage, examTemplateContent));
 
   try {
     for (const i of [1, 2, 3]) {
+      console.log(`Đang tạo đề thi số ${i}...`);
       const exam = await generateSingleExam(i, reviewText, matrixText, sgkText, similarityPercentage, examTemplateContent);
       exams.push(exam);
-      // Optional: Add a small delay between requests if needed, but sequential is usually enough
-      if (i < 3) await wait(1000); 
+      console.log(`Đã hoàn thành đề thi số ${i}.`);
+      // Delay 2 giây giữa các lần gọi để tránh rate limit (429)
+      if (i < 3) await wait(2000); 
     }
     return exams;
   } catch (error) {
