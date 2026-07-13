@@ -5,9 +5,10 @@ interface ApiKeyModalProps {
   onClose: () => void;
   onSave: (key: string) => void;
   currentKey: string;
+  isQuotaExceeded?: boolean; // Prop mới
 }
 
-const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ isOpen, onClose, onSave, currentKey }) => {
+const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ isOpen, onClose, onSave, currentKey, isQuotaExceeded }) => {
   const [key, setKey] = useState(currentKey);
 
   useEffect(() => {
@@ -30,6 +31,15 @@ const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ isOpen, onClose, onSave, curr
             <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4">
               Cài đặt API Key
             </h3>
+
+            {isQuotaExceeded && (
+              <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 p-3 rounded-md mb-4 animate-pulse">
+                <p className="text-sm text-red-600 dark:text-red-400 font-bold">
+                  ⚠️ API Key hiện tại đã hết hạn mức (Quota Exceeded). Vui lòng nhập API Key mới để tiếp tục tiến trình mà không bị mất dữ liệu.
+                </p>
+              </div>
+            )}
+
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
               Nhập Google Gemini API Key của bạn để sử dụng ứng dụng. Key sẽ được lưu trên trình duyệt của bạn.
               <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline ml-1">Lấy Key tại đây</a>.

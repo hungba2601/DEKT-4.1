@@ -14,7 +14,7 @@ const getAiClient = () => {
   // Lưu ý: Trong Vite, cần cấu hình define process.env hoặc dùng import.meta.env.
   // Ở đây chúng ta fallback an toàn.
   const envKey = process.env.GEMINI_API_KEY || '';
-  
+
   // Lấy key cuối cùng: ưu tiên key nhập tay -> key môi trường
   const key = userApiKey || envKey;
 
@@ -30,15 +30,113 @@ const getAiClient = () => {
  * @param text The raw string response from the AI.
  * @returns The extracted JSON string, or null if no valid JSON object is found.
  */
-const extractJson = (text: string): string | null => {
-    // This regex finds the first '{' and the last '}' in the string, capturing everything in between.
-    // It's greedy and designed to handle nested objects/arrays within the main JSON structure.
-    const jsonRegex = /\{[\s\S]*\}/;
-    const match = text.match(jsonRegex);
-    if (match) {
-        return match[0];
+/**
+ * Sanitize a JSON string to fix common issues from AI responses.
+ * Fixes unescaped control characters (newlines, tabs, etc.) inside JSON string values.
+ */
+const sanitizeJsonString = (text: string): string => {
+  // Fix unescaped control characters inside JSON string values
+  // This replaces literal newlines/tabs/carriage returns inside strings with their escaped versions
+  let result = '';
+  let inString = false;
+  let escapeNext = false;
+  
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    
+    if (escapeNext) {
+      result += char;
+      escapeNext = false;
+      continue;
     }
-    return null;
+    
+    if (char === '\\' && inString) {
+      result += char;
+      escapeNext = true;
+      continue;
+    }
+    
+    if (char === '"') {
+      inString = !inString;
+      result += char;
+      continue;
+    }
+    
+    if (inString) {
+      // Replace unescaped control characters inside strings
+      if (char === '\n') { result += '\\n'; continue; }
+      if (char === '\r') { result += '\\r'; continue; }
+      if (char === '\t') { result += '\\t'; continue; }
+      // Replace other control characters
+      const code = char.charCodeAt(0);
+      if (code < 32) { result += ' '; continue; }
+    }
+    
+    result += char;
+  }
+  
+  return result;
+};
+
+/**
+ * Extracts and parses a JSON object from a string that might contain other text.
+ * Tries multiple strategies for robustness.
+ */
+const extractJson = (text: string): string | null => {
+  if (!text || text.trim().length === 0) return null;
+  
+  // Strategy 1: Try to parse the text directly (best case - AI returned clean JSON)
+  try {
+    JSON.parse(text);
+    return text;
+  } catch (e) { /* continue to next strategy */ }
+  
+  // Strategy 2: Try sanitizing the full text first
+  try {
+    const sanitized = sanitizeJsonString(text);
+    JSON.parse(sanitized);
+    return sanitized;
+  } catch (e) { /* continue to next strategy */ }
+  
+  // Strategy 3: Extract JSON block between first { and last }
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    const extracted = text.substring(firstBrace, lastBrace + 1);
+    
+    // Try direct parse
+    try {
+      JSON.parse(extracted);
+      return extracted;
+    } catch (e) { /* try sanitized */ }
+    
+    // Try sanitized parse
+    try {
+      const sanitized = sanitizeJsonString(extracted);
+      JSON.parse(sanitized);
+      return sanitized;
+    } catch (e) { /* continue to next strategy */ }
+  }
+  
+  // Strategy 4: Try to extract from markdown code block ```json ... ```
+  const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)```/;
+  const codeMatch = text.match(codeBlockRegex);
+  if (codeMatch && codeMatch[1]) {
+    const codeContent = codeMatch[1].trim();
+    try {
+      const sanitized = sanitizeJsonString(codeContent);
+      JSON.parse(sanitized);
+      return sanitized;
+    } catch (e) { /* all strategies failed */ }
+  }
+  
+  // Fallback: return the extracted block even if we couldn't parse it
+  // (let the caller handle the parse error with a better error message)
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    return sanitizeJsonString(text.substring(firstBrace, lastBrace + 1));
+  }
+  
+  return null;
 };
 
 const fileToText = (fileContent: string, fileName: string): string => {
@@ -47,65 +145,91 @@ const fileToText = (fileContent: string, fileName: string): string => {
 };
 
 // Sử dụng model Flash để đảm bảo tốc độ và hạn mức miễn phí cao, tránh lỗi 429
-const AI_MODEL = 'gemini-3-flash-preview';
+const AI_MODEL = 'gemini-2.5-flash';
 
-// --- CƠ CHẾ RETRY (THỬ LẠI) ---
+// ------------------------------
+// CƠ CHẾ TẠM DỪNG VÀ CHỜ API KEY MỚI
+// ------------------------------
+type QuotaExceededHandler = () => Promise<string>;
+let onQuotaExceededHandler: QuotaExceededHandler | null = null;
+
+/**
+ * Đăng ký hàm xử lý khi hết hạn mức API.
+ * Hàm này sẽ được gọi và phải trả về API Key mới sau khi người dùng nhập.
+ */
+export const setOnQuotaExceeded = (handler: QuotaExceededHandler) => {
+  onQuotaExceededHandler = handler;
+};
+
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const callWithRetry = async <T>(
-    fn: () => Promise<T>,
-    retries = 10, // Tăng lên 10 lần thử để "lì" hơn với server Google
-    delay = 4000 // Bắt đầu chờ 4 giây (tăng lên từ 3s)
+  fn: () => Promise<T>,
+  retries = 10,
+  delay = 4000
 ): Promise<T> => {
-    try {
-        return await fn();
-    } catch (error: any) {
-        let errorMessage = error.message || JSON.stringify(error);
-        
-        // Kiểm tra mã lỗi phổ biến: 503 (Overloaded), 429 (Rate Limit)
-        const isOverloaded = errorMessage.includes('503') || errorMessage.includes('Overloaded') || errorMessage.includes('UNAVAILABLE');
-        const isRateLimited = errorMessage.includes('429') || errorMessage.includes('Resource has been exhausted');
-        
-        if ((isOverloaded || isRateLimited) && retries > 0) {
-            console.warn(`AI Model đang bận (Lỗi ${isOverloaded ? '503 - Quá tải' : '429 - Hết hạn mức'}). Đang thử lại sau ${delay/1000}s... (Còn ${retries} lần thử)`);
-            await wait(delay);
-            // Thử lại với thời gian chờ tăng gấp đôi (Exponential Backoff), nhưng giới hạn max 30s
-            const nextDelay = Math.min(delay * 1.5, 30000); 
-            return callWithRetry(fn, retries - 1, nextDelay);
-        }
+  try {
+    return await fn();
+  } catch (error: any) {
+    let errorMessage = error.message || JSON.stringify(error);
 
-        // Nếu hết lần thử hoặc lỗi khác, ném ra lỗi đẹp hơn
-        if (isOverloaded) {
-             throw new Error("Hệ thống Google AI đang quá tải (Lỗi 503). Chúng tôi đã thử lại 10 lần nhưng không thành công. Vui lòng thử lại sau ít phút.");
-        }
-        if (isRateLimited) {
-             throw new Error("API Key của bạn đã hết hạn mức sử dụng trong ngày/phút (Lỗi 429). Vui lòng chờ hoặc đổi API Key khác.");
-        }
+    const isOverloaded = errorMessage.includes('503') || errorMessage.includes('Overloaded') || errorMessage.includes('UNAVAILABLE');
+    const isRateLimited = errorMessage.includes('429') || errorMessage.includes('Resource has been exhausted');
 
-        // Clean up JSON error message if possible for better UX
-        try {
-            if (errorMessage.startsWith('{') && errorMessage.includes('"message":')) {
-                const parsed = JSON.parse(errorMessage);
-                if (parsed.error && parsed.error.message) {
-                    throw new Error(`Lỗi từ Google: ${parsed.error.message}`);
-                }
-            }
-        } catch (e) {
-            // Ignore parsing error, throw original
+    if (isRateLimited && onQuotaExceededHandler) {
+      console.warn("API Key hết hạn mức. Đang tạm dừng để chờ API Key mới từ người dùng...");
+      try {
+        // Gọi handler để mở modal và chờ người dùng nhập key mới
+        const newKey = await onQuotaExceededHandler();
+        if (newKey) {
+          setGeminiApiKey(newKey);
+          console.log("Đã nhận API Key mới. Đang thử lại tiến trình...");
+          // Thử lại ngay lập tức với key mới
+          return callWithRetry(fn, retries, delay);
+        } else {
+          // Người dùng đã ấn hủy (newKey là chuỗi rỗng)
+          throw new Error("Người dùng đã hủy cập nhật API Key. Tiến trình tạo đề bị dừng.");
         }
-
-        throw error;
+      } catch (e) {
+        console.error("Người dùng hủy việc đổi API Key hoặc có lỗi xảy ra:", e);
+        throw e; // Ném lỗi ra ngoài để Tab5 catch và hiển thị thông báo, dừng vòng lặp
+      }
     }
+
+    if ((isOverloaded || isRateLimited) && retries > 0) {
+      console.warn(`AI Model đang bận (Lỗi ${isOverloaded ? '503 - Quá tải' : '429 - Hết hạn mức'}). Đang thử lại sau ${delay / 1000}s... (Còn ${retries} lần thử)`);
+      await wait(delay);
+      const nextDelay = Math.min(delay * 1.5, 30000);
+      return callWithRetry(fn, retries - 1, nextDelay);
+    }
+
+    if (isOverloaded) {
+      throw new Error("Hệ thống Google AI đang quá tải (Lỗi 503). Đã thử lại nhiều lần nhưng không thành công.");
+    }
+    if (isRateLimited) {
+      throw new Error("API Key đã hết hạn mức (Lỗi 429). Vui lòng đổi API Key khác để tiếp tục.");
+    }
+
+    try {
+      if (errorMessage.startsWith('{') && errorMessage.includes('"message":')) {
+        const parsed = JSON.parse(errorMessage);
+        if (parsed.error && parsed.error.message) {
+          throw new Error(`Lỗi từ Google: ${parsed.error.message}`);
+        }
+      }
+    } catch (e) { }
+
+    throw error;
+  }
 };
 // ------------------------------
 
 export const generateMatrixAndSpec = async (
-  sgkFileContent: string, 
+  sgkFileContent: string,
   curriculumFileContent: string,
   config: MatrixConfig,
   examTitle: string
 ): Promise<{ matrix: string; spec: SpecData }> => {
-  const ai = getAiClient();
   const model = AI_MODEL;
   const sgkText = fileToText(sgkFileContent, "Sách giáo khoa (Toàn bộ nội dung)");
   const curriculumText = fileToText(curriculumFileContent, "Phân phối chương trình");
@@ -122,9 +246,11 @@ export const generateMatrixAndSpec = async (
         - **Tổng điểm toàn bài thi PHẢI LÀ 10.0.**
         - **QUY TẮC PHÂN BỔ ĐIỂM (CỰC KỲ QUAN TRỌNG):** Bạn phải tự động phân bổ 10.0 điểm cho ${config.soCauTuLuan} câu hỏi. Điểm của mỗi câu có thể khác nhau, tùy thuộc vào độ phức tạp và lượng kiến thức. Điểm của mỗi câu Tự luận PHẢI được chọn từ danh sách sau: {1, 1.5, 2, 2.5, 3, 3.5}. Tổng điểm của tất cả các câu phải bằng 10.0.
         - **Số lượng câu trắc nghiệm (Nhiều lựa chọn, Đúng-Sai, Trả lời ngắn):** Bắt buộc là 0.
-    - **PHÂN BỔ TỶ LỆ ĐIỂM THEO MỨC ĐỘ (HƯỚNG DẪN THAM KHẢO):**
-        - Cố gắng phân bổ điểm số của các câu hỏi sao cho gần đúng nhất với các tỷ lệ sau:
-            - Tỷ lệ điểm theo mức độ: Nhận biết ${config.biet}%, Thông hiểu ${config.hieu}%, Vận dụng ${config.vanDung}%
+    - **PHÂN BỔ TỶ LỆ ĐIỂM THEO MỨC ĐỘ (BẮT BUỘC TUYỆT ĐỐI - KHÔNG ĐƯỢC SAI LỆCH):**
+        - Nhận biết: Chính xác ${config.biet}% (tương đương ${(config.biet / 100 * 10).toFixed(2)} điểm).
+        - Thông hiểu: Chính xác ${config.hieu}% (tương đương ${(config.hieu / 100 * 10).toFixed(2)} điểm).
+        - Vận dụng: Chính xác ${config.vanDung}% (tương đương ${(config.vanDung / 100 * 10).toFixed(2)} điểm).
+        - **LƯU Ý:** Bạn phải tự điều phối điểm của các câu tự luận vào 3 mức độ sao cho tổng điểm của từng mức độ phải ĐÚNG CHÍNH XÁC con số yêu cầu trên (tổng bằng 10.0).
     `;
   } else {
     const totalQuestions = config.soCauNhieuLuaChon + config.soCauDungSai + config.soCauTraLoiNgan + config.soCauTuLuan;
@@ -145,16 +271,19 @@ export const generateMatrixAndSpec = async (
         - **${config.soCauTraLoiNgan} câu trắc nghiệm Trả lời ngắn.**
         - **${config.soCauTuLuan} câu Tự luận.**
     - **CẤU TRÚC CÂU ĐÚNG-SAI:** Mỗi câu hỏi Đúng-Sai lớn phải bao gồm chính xác **${config.soYTrongCauDungSai} câu phát biểu nhỏ**.
-    - **PHÂN BỔ TỶ LỆ ĐIỂM (HƯỚNG DẪN THAM KHẢO):**
-        - Cố gắng phân bổ điểm số của các câu hỏi sao cho gần đúng nhất với các tỷ lệ sau:
-            - Tỷ lệ điểm Trắc nghiệm / Tự luận: ${config.tracNghiem}% / ${config.tuLuan}% (Tương đương ${tongDiemTracNghiem.toFixed(2)}đ / ${tongDiemTuLuan.toFixed(2)}đ)
-            - Tỷ lệ điểm theo mức độ: Nhận biết ${config.biet}%, Thông hiểu ${config.hieu}%, Vận dụng ${config.vanDung}%
+    - **PHÂN BỔ TỶ LỆ ĐIỂM (BẮT BUỘC TUYỆT ĐỐI - KHÔNG ĐƯỢC SAI LỆCH):**
+        - Tỷ lệ điểm Trắc nghiệm / Tự luận: Chính xác ${config.tracNghiem}% / ${config.tuLuan}% (Tương đương ${tongDiemTracNghiem.toFixed(2)}đ / ${tongDiemTuLuan.toFixed(2)}đ)
+        - Tỷ lệ điểm theo mức độ nhận thức:
+            + Nhận biết: Chính xác ${config.biet}% (tương đương ${(config.biet / 100 * 10).toFixed(2)} điểm).
+            + Thông hiểu: Chính xác ${config.hieu}% (tương đương ${(config.hieu / 100 * 10).toFixed(2)} điểm).
+            + Vận dụng: Chính xác ${config.vanDung}% (tương đương ${(config.vanDung / 100 * 10).toFixed(2)} điểm).
+        - **LƯU Ý QUAN TRỌNG:** Bạn PHẢI sắp xếp số lượng câu hỏi và phân chia điểm số (0.25đ, 0.5đ, 1.0đ, 1.5đ...) vào 3 cột Nhận biết, Thông hiểu, Vận dụng sao cho tổng điểm cộng dồn ở mỗi cột đạt CHÍNH XÁC số điểm yêu cầu ở trên. Tuyệt đối không được tự ý làm tròn sai lệch (như 32.5%). Tổng % phải ĐÚNG 100% và tổng điểm phải ĐÚNG 10.0.
     `;
   }
-  
+
   // Thêm phần xử lý Additional Prompt nếu có
   if (config.additionalPrompt) {
-      configRules += `
+    configRules += `
       - **YÊU CẦU ĐẶC BIỆT TỪ NGƯỜI DÙNG (BẮT BUỘC ƯU TIÊN CAO NHẤT):**
           ${config.additionalPrompt}
           **HƯỚNG DẪN XỬ LÝ YÊU CẦU ĐẶC BIỆT:**
@@ -164,9 +293,9 @@ export const generateMatrixAndSpec = async (
             3. Việc khớp đúng tổng điểm phân môn quan trọng hơn việc khớp chính xác tỷ lệ % mức độ nhận biết/thông hiểu chung.
       `;
   }
-  
-  const totalQuestionsString = config.isTuLuan100 ? 
-    `(${config.soCauTuLuan} - 10.0)` : 
+
+  const totalQuestionsString = config.isTuLuan100 ?
+    `(${config.soCauTuLuan} - 10.0)` :
     `(${config.soCauNhieuLuaChon + config.soCauDungSai + config.soCauTraLoiNgan + config.soCauTuLuan} - 10.0)`;
 
 
@@ -189,7 +318,7 @@ export const generateMatrixAndSpec = async (
     --- YÊU CẦU CÔNG VIỆC (TUYỆT ĐỐI KHÔNG BỎ SÓT) ---
     Dựa vào TOÀN BỘ nội dung của 2 file đã cho, hãy tạo ra một MA TRẬN ĐỀ KIỂM TRA và một BẢN ĐẶC TẢ chi tiết. 
     **YÊU CẦU BẮT BUỘC:**
-    1.  Bạn PHẢI rà soát kỹ lưỡng và phân bổ câu hỏi cho **TẤT CẢ (100%) CÁC BÀI HỌC** có trong "FILE PHÂN PHỐI CHƯƠNG TRÌNH".
+    1.  Bạn PHẢI rà soát kỹ lưỡng and phân bổ câu hỏi cho **TẤT CẢ (100%) CÁC BÀI HỌC** có trong "FILE PHÂN PHỐI CHƯƠNG TRÌNH".
     2.  **CHIẾN LƯỢC PHÂN BỔ:** Nếu số lượng câu hỏi có hạn, bạn hãy chia nhỏ hoặc giảm bớt câu hỏi ở các bài trọng tâm để san sẻ cho các bài khác. **MỤC TIÊU LÀ: MỖI BÀI HỌC PHẢI CÓ ÍT NHẤT MỘT HÌNH THỨC ĐÁNH GIÁ (có thể là 1 câu TN, hoặc 1 ý Đ/S, hoặc 1 câu TL).** Đừng để bài nào bị trắng (0 câu hỏi) trừ khi file phân phối ghi rõ là "Không dạy" hoặc "Tự học".
     3.  **TUYỆT ĐỐI KHÔNG ĐƯỢC BỎ SÓT BẤT KỲ BÀI HỌC NÀO**.
     4.  Bạn PHẢI phân bổ câu hỏi vào cả 4 hình thức: Nhiều lựa chọn, Đúng - Sai, Trả lời ngắn và Tự luận, dựa trên yêu cầu và nội dung.
@@ -314,60 +443,102 @@ export const generateMatrixAndSpec = async (
     }
   `;
 
-  // --- SỬ DỤNG callWithRetry ---
-  const response = await callWithRetry<GenerateContentResponse>(() => ai.models.generateContent({
-    model,
-    contents: prompt,
-    config: { responseMimeType: "application/json" }
-  }));
-  
-  const text = response.text || "";
-  const jsonString = extractJson(text);
+  // --- HÀM GỌI AI VÀ PARSE JSON (CÓ TỰ ĐỘNG THỬ LẠI KHI LỖI JSON) ---
+  const maxJsonRetries = 2; // Thử tối đa 2 lần nếu lỗi JSON
+  let lastError: Error | null = null;
 
-  if (!jsonString) {
-    console.error("Failed to extract JSON from response:", text);
-    throw new Error("AI không trả về dữ liệu JSON hợp lệ. Vui lòng thử lại.");
-  }
-  
-  try {
-    const parsed = JSON.parse(jsonString);
-    if (!parsed.matrix || !Array.isArray(parsed.spec)) {
-      throw new Error("Dữ liệu JSON từ AI thiếu các trường bắt buộc 'matrix' hoặc 'spec'.");
+  for (let attempt = 1; attempt <= maxJsonRetries; attempt++) {
+    try {
+      console.log(`Gọi AI tạo ma trận (lần ${attempt}/${maxJsonRetries})...`);
+      
+      const response = await callWithRetry<GenerateContentResponse>(() => 
+        getAiClient().models.generateContent({
+          model,
+          contents: attempt === 1 ? prompt : prompt + '\n\n**LƯU Ý QUAN TRỌNG:** Phản hồi của bạn PHẢI là JSON thuần túy, hợp lệ. KHÔNG được có ký tự xuống dòng thực (literal newline) bên trong chuỗi JSON. Hãy sử dụng \\n thay cho xuống dòng trong các giá trị chuỗi. KHÔNG sử dụng markdown code block.',
+          config: { responseMimeType: "application/json" }
+        })
+      );
+
+      const text = response.text || "";
+      
+      if (!text.trim()) {
+        console.error(`Lần ${attempt}: AI trả về phản hồi rỗng.`);
+        lastError = new Error("AI trả về phản hồi rỗng. Vui lòng thử lại.");
+        if (attempt < maxJsonRetries) { await wait(2000); continue; }
+        throw lastError;
+      }
+
+      const jsonString = extractJson(text);
+
+      if (!jsonString) {
+        console.error(`Lần ${attempt}: Không thể trích xuất JSON từ phản hồi:`, text.substring(0, 500));
+        lastError = new Error("AI không trả về dữ liệu JSON hợp lệ. Vui lòng thử lại.");
+        if (attempt < maxJsonRetries) { await wait(2000); continue; }
+        throw lastError;
+      }
+
+      const parsed = JSON.parse(jsonString);
+      
+      if (!parsed.matrix || !Array.isArray(parsed.spec)) {
+        console.error(`Lần ${attempt}: JSON thiếu trường bắt buộc. Keys:`, Object.keys(parsed));
+        lastError = new Error("Dữ liệu JSON từ AI thiếu các trường bắt buộc 'matrix' hoặc 'spec'.");
+        if (attempt < maxJsonRetries) { await wait(2000); continue; }
+        throw lastError;
+      }
+
+      console.log('Đã parse JSON ma trận thành công.');
+      return {
+        matrix: parsed.matrix,
+        spec: parsed.spec,
+      };
+
+    } catch (e: any) {
+      const isJsonError = e instanceof SyntaxError || 
+                          (e.message && e.message.includes('JSON'));
+      
+      if (isJsonError && attempt < maxJsonRetries) {
+        console.warn(`Lần ${attempt}: Lỗi JSON, đang thử lại...`, e.message);
+        lastError = e;
+        await wait(2000);
+        continue;
+      }
+      
+      // Nếu không phải lỗi JSON hoặc đã hết lần thử -> throw
+      console.error(`Lỗi khi tạo ma trận (lần ${attempt}):`, e.message);
+      if (e instanceof SyntaxError) {
+        throw new Error("AI trả về JSON không hợp lệ sau nhiều lần thử. Vui lòng thử lại hoặc đổi API Key.");
+      }
+      throw e;
     }
-    return {
-      matrix: parsed.matrix,
-      spec: parsed.spec,
-    };
-  } catch (e) {
-    console.error("Failed to parse JSON response:", jsonString);
-    throw new Error("Lỗi khi phân tích dữ liệu JSON từ AI.");
   }
+
+  // Fallback (should not reach here)
+  throw lastError || new Error("Lỗi không xác định khi tạo ma trận.");
 };
 
 export const generateReviewQuestions = async (
-    sgkFileContent: string, 
-    matrix: string,
-    spec: SpecData,
-    config: MatrixConfig
+  sgkFileContent: string,
+  matrix: string,
+  spec: SpecData,
+  config: MatrixConfig
 ): Promise<string> => {
-    const ai = getAiClient();
-    const model = AI_MODEL;
-    const sgkText = fileToText(sgkFileContent, "Sách giáo khoa");
-    const matrixText = `--- BẮT ĐẦU MA TRẬN ---\n${matrix}\n--- KẾT THÚC MA TRẬN ---`;
-    const specText = `--- BẮT ĐẦU BẢN ĐẶC TẢ ---\n${JSON.stringify(spec, null, 2)}\n--- KẾT THÚC BẢN ĐẶC TẢ ---`;
+  const model = AI_MODEL;
+  const sgkText = fileToText(sgkFileContent, "Sách giáo khoa");
+  const matrixText = `--- BẮT ĐẦU MA TRẬN ---\n${matrix}\n--- KẾT THÚC MA TRẬN ---`;
+  const specText = `--- BẮT ĐẦU BẢN ĐẶC TẢ ---\n${JSON.stringify(spec, null, 2)}\n--- KẾT THÚC BẢN ĐẶC TẢ ---`;
 
-    const soCauNho = config.soYTrongCauDungSai || 4;
-    const alphabet = 'abcdefghijklmnopqrstuvwxyz';
-    let exampleStatements = '';
-    let exampleAnswers = '';
+  const soCauNho = config.soYTrongCauDungSai || 4;
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz';
+  let exampleStatements = '';
+  let exampleAnswers = '';
 
-    for (let i = 0; i < soCauNho && i < alphabet.length; i++) {
-        exampleStatements += `<p>${alphabet[i]}. Phát biểu ${i + 1}.</p>`;
-        const randomAnswer = Math.random() > 0.5 ? 'Đúng' : 'Sai';
-        exampleAnswers += `<p>${alphabet[i]} - ${randomAnswer}</p>`;
-    }
+  for (let i = 0; i < soCauNho && i < alphabet.length; i++) {
+    exampleStatements += `<p>${alphabet[i]}. Phát biểu ${i + 1}.</p>`;
+    const randomAnswer = Math.random() > 0.5 ? 'Đúng' : 'Sai';
+    exampleAnswers += `<p>${alphabet[i]} - ${randomAnswer}</p>`;
+  }
 
-    const prompt = `
+  const prompt = `
         Bạn là một AI chuyên tạo câu hỏi ôn tập cho giáo viên.
         
         --- NGUỒN DỮ LIỆU ---
@@ -393,19 +564,17 @@ export const generateReviewQuestions = async (
         --- QUY TẮC RIÊNG CHO CÂU TRẮC NGHIỆM TIẾT KIỆM GIẤY (ĐỊNH DẠNG XUẤT WORD) ---
         9. **Định dạng lựa chọn (A, B, C, D) - QUAN TRỌNG:** 
            - **TUYỆT ĐỐI KHÔNG** sử dụng CSS Flexbox (display: flex) vì Word không hỗ trợ.
-           - Để trình bày các lựa chọn trên cùng một hàng hoặc chia cột, hãy sử dụng **HTML TABLE không viền (border="0")**.
-           - Ví dụ cấu trúc HTML bắt buộc cho 4 đáp án trên 1 dòng:
-             \`<table style="width:100%; border:none;"><tr><td style="border:none;">A. ...</td><td style="border:none;">B. ...</td><td style="border:none;">C. ...</td><td style="border:none;">D. ...</td></tr></table>\`
-           - Ví dụ cấu trúc HTML cho 2 dòng (2 cột):
-             \`<table style="width:100%; border:none;"><tr><td style="border:none;">A. ...</td><td style="border:none;">B. ...</td></tr><tr><td style="border:none;">C. ...</td><td style="border:none;">D. ...</td></tr></table>\`
+           - **BẮT BUỘC** trình bày 4 phương án A, B, C, D theo cấu trúc **2 dòng 2 cột**. TUYỆT ĐỐI KHÔNG dàn hàng ngang 4 cột.
+           - Cấu trúc HTML bắt buộc cho 2 dòng (2 cột):
+             \`<table style="width:100%; border:none; table-layout:fixed;"><tr><td style="border:none; width:50%;">A. ...</td><td style="border:none; width:50%;">B. ...</td></tr><tr><td style="border:none; width:50%;">C. ...</td><td style="border:none; width:50%;">D. ...</td></tr></table>\`
            - Nếu đáp án rất dài, mỗi đáp án một dòng (không dùng table hoặc table 1 cột).
 
         10. **XÁO TRỘN ĐÁP ÁN ĐÚNG NGẪU NHIÊN (CỰC KỲ QUAN TRỌNG - KHÔNG ĐƯỢC LƯỜI):** 
            - Đối với các câu hỏi trắc nghiệm nhiều lựa chọn (TN), bạn PHẢI **xáo trộn vị trí đáp án đúng một cách ngẫu nhiên tuyệt đối** giữa các phương án A, B, C, D.
-           - **TUYỆT ĐỐI CẤM:** Không được để đáp án đúng tập trung vào một chữ cái cụ thể (như B hoặc A) cho nhiều câu hỏi liên tiếp, đặc biệt là ở các bài học phía sau trong danh sách.
-           - **YÊU CẦU PHÂN BỔ ĐỀU:** Bạn phải phân bổ đáp án đúng sao cho tỷ lệ các phương án A, B, C, D được chọn làm đáp án đúng là xấp xỉ ngang nhau (khoảng 25% cho mỗi chữ cái) xuyên suốt từ đầu đến cuối bộ câu hỏi. 
-           - **KIỂM TRA LẠI:** Sau khi tạo xong mỗi câu hỏi, hãy kiểm tra xem chữ cái đáp án đúng có đang bị lặp lại quá 3 lần liên tiếp không. Nếu có, hãy thay đổi vị trí đáp án đúng ngay lập tức.
-           - **LƯU Ý:** Đừng để tình trạng các bài học đầu tiên thì xáo trộn tốt, nhưng các bài học phía sau thì đáp án đúng toàn là B hoặc toàn là A. Mọi câu hỏi phải được đối xử công bằng và ngẫu nhiên.
+           - **TUYỆT ĐỐI CẤM:** Không được để đáp án đúng tập trung vào một chữ cái cụ thể (như B hoặc A) cho nhiều câu hỏi liên tiếp. Tránh các quy luật dễ đoán.
+           - **YÊU CẦU PHÂN BỔ ĐỀU:** Bạn phải phân bổ đáp án đúng sao cho tỷ lệ các phương án A, B, C, D được chọn làm đáp án đúng là xấp xỉ ngang nhau (khoảng 25% cho mỗi chữ cái) xuyên suốt từ đầu đến cuối bộ câu hỏi.
+           - **PHẢI KIỂM TRA LẠI TỔNG THỂ:** Trước khi hoàn tất, hãy đếm lại số lượng đáp án A, B, C, D. Nếu một chữ cái chiếm quá 35% tổng số câu hỏi trắc nghiệm, bạn PHẢI hoán vị lại vị trí đáp án của các câu hỏi để đưa tỷ lệ về mức cân bằng.
+           - **MẸO:** Đừng để tình trạng các bài học đầu tiên thì xáo trộn tốt, nhưng các bài học phía sau thì đáp án đúng lại lặp lại một mẫu nhất định. Mọi câu hỏi phải được đối xử công bằng và ngẫu nhiên.
 
         --- QUY TẮC RIÊNG CHO CÂU HỎI ĐÚNG/SAI (CỰC KỲ QUAN TRỌNG) ---
         11.  Mỗi câu hỏi dạng Đúng/Sai PHẢI bao gồm một câu dẫn chung và chính xác **${soCauNho}** câu phát biểu nhỏ (đánh dấu a, b, c, d, ...). Người học sẽ đánh giá từng phát biểu là Đúng hay Sai.
@@ -442,153 +611,142 @@ export const generateReviewQuestions = async (
         - Phản hồi CHỈ được phép chứa duy nhất nội dung HTML của các câu hỏi và đáp án theo đúng định dạng đã yêu cầu.
     `;
 
-    // --- SỬ DỤNG callWithRetry ---
-    const response = await callWithRetry<GenerateContentResponse>(() => ai.models.generateContent({ model, contents: prompt }));
-    return response.text || "";
+  // --- SỬ DỤNG callWithRetry ---
+  const response = await callWithRetry<GenerateContentResponse>(() => 
+    getAiClient().models.generateContent({ model, contents: prompt })
+  );
+  return response.text || "";
 };
 
-export const generateExams = async (
-    reviewFileContent: string, 
-    matrix: string, 
-    sgkFileContent: string,
-    similarityPercentage: number,
-    examTemplateContent?: string
-): Promise<string[]> => {
-    const ai = getAiClient();
-    const model = AI_MODEL;
-    const reviewText = fileToText(reviewFileContent, "Ngân hàng câu hỏi ôn tập");
-    const matrixText = `--- BẮT ĐẦU MA TRẬN ---\n${matrix}\n--- KẾT THÚC MA TRẬN ---`;
-    const sgkText = fileToText(sgkFileContent, "Sách giáo khoa (Nguồn bổ sung khi cần tạo câu hỏi mới):");
+/**
+ * Tạo một đề thi đơn lẻ.
+ */
+const generateSingleExam = async (
+  index: number,
+  reviewText: string,
+  matrixText: string,
+  sgkText: string,
+  similarityPercentage: number,
+  examTemplateContent?: string,
+  soYTrongCauDungSai: number = 4
+): Promise<string> => {
+  const model = AI_MODEL;
 
-    const similarityInstruction = `
+  const similarityInstruction = `
         --- QUY TẮC VỀ NGUỒN CÂU HỎI (CỰC KỲ QUAN TRỌNG) ---
-        -   Bạn phải tạo đề thi sao cho ${similarityPercentage}% số câu hỏi được lấy trực tiếp từ "NGÂN HÀNG CÂU HỎI".
-        -   ${100 - similarityPercentage}% số câu hỏi còn lại PHẢI được bạn tự tạo mới. Các câu hỏi mới này phải dựa trên nội dung từ "SÁCH GIÁO KHOA (Nguồn bổ sung)" và phải tuân thủ nghiêm ngặt MA TRẬN về nội dung, mức độ và hình thức.
-        -   Nếu ${similarityPercentage} là 100, TOÀN BỘ câu hỏi phải được lấy từ "NGÂN HÀNG CÂU HỎI".
-        -   Nếu ${similarityPercentage} là 0, TOÀN BỘ câu hỏi phải được tạo mới dựa trên "SÁCH GIÁO KHOA (Nguồn bổ sung)".
+        -   TOÀN BỘ câu hỏi PHẢI được lấy từ "NGÂN HÀNG CÂU HỎI" đã cung cấp.
+        -   Nếu số lượng câu hỏi trong "NGÂN HÀNG CÂU HỎI" không đủ để tạo ra các đề khác biệt hoàn toàn, bạn ĐƯỢC PHÉP sử dụng lại các câu hỏi đã có (chấp nhận các đề giống nhau về câu hỏi) nhưng BẮT BUỘC PHẢI xáo trộn thứ tự câu hỏi và hoán vị thứ tự các phương án A, B, C, D một cách ngẫu nhiên.
+        -   Tuyệt đối không sử dụng các nguồn kiến thức bên ngoài nếu không có trong ngân hàng câu hỏi.
     `;
 
-
-    let formatInstruction = '';
-    if (examTemplateContent) {
-        formatInstruction = `
+  let formatInstruction = '';
+  if (examTemplateContent) {
+    formatInstruction = `
             --- QUY TẮC ĐỊNH DẠNG (CỰC KỲ QUAN TRỌNG) ---
-            1.  **SỬ DỤNG MẪU HTML:** Bạn PHẢI sử dụng đoạn mã HTML trong "FILE MẪU (HTML)" dưới đây làm khuôn mẫu TUYỆT ĐỐI cho cả 2 đề thi.
+            1.  **SỬ DỤNG MẪU HTML:** Bạn PHẢI sử dụng đoạn mã HTML trong "FILE MẪU (HTML)" dưới đây làm khuôn mẫu TUYỆT ĐỐI cho đề thi này.
             2.  **BẢO TOÀN CẤU TRÚC:** Đầu ra của bạn phải là một chuỗi HTML hoàn chỉnh. TUYỆT ĐỐI không được thay đổi cấu trúc, các thẻ HTML (<table>, <div>, <p>, <span>), các class, hoặc style inline của file mẫu. Hãy giữ nguyên định dạng y hệt.
-            3.  **THAY THẾ NỘI DUNG:** Nhiệm vụ chính của bạn là tìm các vị trí giữ chỗ (placeholders) trong file mẫu (ví dụ: "Câu 1:", "PHẦN I. TRẮC NGHIỆM", "[NỘI DUNG CÂU HỎI]", v.v.) và thay thế chúng bằng các câu hỏi và đáp án tương ứng bạn đã chọn từ NGÂN HÀNG CÂU HỎI. Bạn phải điền đầy đủ các câu hỏi vào đúng các phần Trắc nghiệm và Tự luận như ma trận yêu cầu.
-            4.  **KẾT QUẢ:** Kết quả cuối cùng phải là 2 chuỗi HTML hoàn chỉnh, sẵn sàng để hiển thị trên trình duyệt.
-
+            3.  **THAY THẾ NỘI DUNG:** Tìm các vị trí giữ chỗ (placeholders) trong file mẫu và thay thế chúng bằng câu hỏi và đáp án tương ứng.
+            
             --- FILE MẪU (HTML) ---
             ${examTemplateContent}
         `;
-    } else {
-        formatInstruction = `
+  } else {
+    formatInstruction = `
             --- QUY TẮC ĐỊNH DẠNG ---
             Định dạng đầu ra phải là HTML.
-            -   Mỗi đề thi phải có tiêu đề rõ ràng (ví dụ: "ĐỀ SỐ 1").
-            -   Chia rõ 2 phần: "PHẦN I: TRẮC NGHIỆM" và "PHẦN II: TỰ LUẬN".
-            -   Liệt kê các câu hỏi một cách tuần tự.
+            -   Đề thi phải có tiêu đề rõ ràng (ví dụ: "ĐỀ SỐ ${index}").
+            -   Chia rõ các phần chi tiết (nếu có trong ma trận), BẮT BUỘC ghi rõ tiêu đề mỗi phần kèm theo "(Số câu hỏi - Tổng điểm)". Ví dụ cấu trúc chuẩn:
+                + "PHẦN I: TRẮC NGHIỆM NHIỀU PHƯƠNG ÁN LỰA CHỌN (... câu - ... điểm)"
+                + "PHẦN II: TRẮC NGHIỆM ĐÚNG SAI (... câu - ... điểm)"
+                + "PHẦN III: TRẮC NGHIỆM TRẢ LỜI NGẮN (... câu - ... điểm)"
+                + "PHẦN IV: TỰ LUẬN (nếu có) (... câu - ... điểm)"
             -   Sau phần đề thi, phải có phần "ĐÁP ÁN VÀ HƯỚNG DẪN CHẤM" chi tiết.
         `;
-    }
+  }
 
-    const prompt = `
-        Bạn là một AI chuyên tạo đề kiểm tra từ ngân hàng câu hỏi có sẵn và có thể tự tạo câu hỏi mới.
+  const prompt = `
+        Bạn là một AI chuyên tạo đề kiểm tra chất lượng cao. 
+        Đây là đề thi số **${index}** trong bộ 3 đề. Hãy đảm bảo nó được xáo trộn thứ tự câu hỏi và thứ tự đáp án. Nếu ngân hàng câu hỏi không đủ để tạo các đề khác biệt (khi chọn 100%), bạn hãy sử dụng lại câu hỏi từ ngân hàng nhưng phải xáo trộn chúng.
 
         --- NGUỒN DỮ LIỆU ---
-        1.  **NGÂN HÀNG CÂU HỎI (NGUỒN CHÍNH):** ${reviewText}
+        1.  **NGÂN HÀNG CÂU HỎI (NGUỒN CHÍNH VÀ DUY NHẤT):** ${reviewText}
         2.  **MA TRẬN ĐỀ KIỂM TRA (BẮT BUỘC TUÂN THỦ):** ${matrixText}
-        3.  **SÁCH GIÁO KHOA (Nguồn bổ sung khi cần tạo câu hỏi mới):** ${sgkText}
-        
-        --- YÊU CẦU ---
-        Dựa vào các nguồn dữ liệu trên, hãy tạo ra **2 ĐỀ KIỂM TRA HOÀN CHỈNH**.
         
         ${similarityInstruction}
 
-        --- QUY TẠO ĐỀ (TUYỆT ĐỐI TUÂN THỦ) ---
-        1.  **TUÂN THỦ MA TRẬN:** Mỗi đề thi phải tuân thủ CHÍNH XÁC 100% về số lượng câu hỏi, điểm số, mức độ nhận thức (NB, TH, VD, VDC), và nội dung kiến thức cho từng phần trắc nghiệm và tự luận như ma trận đã quy định.
-        2.  **CHỌN & TẠO CÂU HỎI:** Tuân thủ quy tắc về nguồn câu hỏi đã nêu ở trên. Không được tự ý thay đổi nội dung câu hỏi lấy từ ngân hàng.
-        3.  **TẠO 2 ĐỀ KHÁC NHAU:** Hai đề phải có các câu hỏi khác nhau nhưng vẫn đảm bảo cùng ma trận và có độ khó tương đương.
-        
-        --- QUY TẮC VỀ KÝ HIỆU TOÁN HỌC (CỰC KỲ QUAN TRỌNG) ---
-        4. **TUYỆT ĐỐI KHÔNG** sử dụng ký hiệu $ cho văn bản thông thường. 
-        5. **CHỈ SỬ DỤNG** cú pháp LaTeX ($...$ cho nội dòng, $$...$$ cho khối) cho các công thức toán học, vật lý, hóa học thực sự. Nếu nội dung là chữ viết bình thường, hãy để ở dạng văn bản thuần túy.
-
-        6.  **THANG ĐIỂM:** Phân bổ điểm số cho từng câu hỏi một cách hợp lý và chính xác để tổng điểm của toàn bộ bài thi là 10.0.
-        7.  **TÁCH TRANG ĐÁP ÁN (CỰC KỲ QUAN TRỌNG):** Phần đáp án và hướng dẫn chấm PHẢI LUÔN nằm trên một trang riêng biệt so với phần câu hỏi. Để thực hiện điều này, hãy chèn thẻ \`<div style="page-break-before: always;"></div>\` ngay trước tiêu đề của phần đáp án (ví dụ: trước "ĐÁP ÁN VÀ HƯỚNG DẪN CHẤM"). Quy tắc này áp dụng ngay cả khi sử dụng file mẫu.
-        8.  **TIÊU ĐỀ NĂM HỌC (BẮT BUỘC):** Trong tiêu đề của mỗi đề thi, bạn PHẢI luôn bao gồm dòng chữ "NĂM HỌC 2025-2026".
-        
-        9.  **ĐỊNH DẠNG XUẤT WORD CHUẨN (BẮT BUỘC TUÂN THỦ):**
-           - **Mục tiêu:** Giữ cho đề thi (phần câu hỏi) KHÔNG VƯỢT QUÁ 4 TRANG nhưng vẫn đảm bảo thẩm mỹ khi xuất ra Word.
-           - **TRẮC NGHIỆM:** Với các câu hỏi có 4 lựa chọn (A, B, C, D):
-             + **TUYỆT ĐỐI KHÔNG dùng CSS Flexbox** (display: flex) vì Word không hiểu.
-             + **BẮT BUỘC dùng HTML TABLE** không viền (border="0") để chia cột các đáp án.
-             + Nếu các đáp án ngắn: Dùng table 1 dòng 4 cột.
-             + Nếu đáp án trung bình: Dùng table 2 dòng 2 cột.
-             + Cấu trúc ví dụ: \`<table style="width:100%; border:none;"><tr><td style="border:none;">A...</td><td style="border:none;">B...</td>...</tr></table>\`
-             + Việc dùng Table sẽ đảm bảo khi xuất ra Word, các đáp án vẫn nằm đúng vị trí (không bị dồn dòng hay nhảy lung tung như dùng CSS).
-           - **KHOẢNG CÁCH:** Giảm tối đa khoảng cách (margin/padding) giữa các câu hỏi.
-        
-        10. **ĐỊNH DẠNG BẢNG ĐÁP ÁN TRẮC NGHIỆM (QUAN TRỌNG):**
-           - Tại phần "ĐÁP ÁN VÀ HƯỚNG DẪN CHẤM", đối với Phần I (Trắc nghiệm nhiều lựa chọn):
-           - **BẮT BUỘC KẺ BẢNG NGANG (Horizontal Table) gồm 2 dòng.**
-           - **Dòng 1:** Ghi số thứ tự câu (Câu 1, Câu 2, ...).
-           - **Dòng 2:** Ghi đáp án tương ứng (A, B, ...).
-           - Nếu số lượng câu nhiều (ví dụ > 10 câu), hãy chia thành nhiều bảng nhỏ nối tiếp nhau (mỗi bảng khoảng 10-15 cột).
-           - KHÔNG được liệt kê đáp án theo chiều dọc.
-
-        11. **CẤU TRÚC & THỨ TỰ PHẦN THI (BẮT BUỘC):**
-           - Đề thi PHẢI chia thành các phần rõ ràng, KHÔNG trộn lẫn, theo đúng thứ tự sau:
-           - **PHẦN I: Câu trắc nghiệm nhiều phương án lựa chọn.** (Chứa các câu hỏi chọn A, B, C, D).
-           - **PHẦN II: Câu trắc nghiệm đúng sai.** (Chứa các câu hỏi có 4 ý a, b, c, d để xác định Đ/S).
-           - **PHẦN III: Câu trắc nghiệm trả lời ngắn.** (Chứa các câu hỏi điền đáp án/số).
-           - **PHẦN IV: Tự luận.** (Chứa các câu hỏi tự luận).
-           - Nếu phần nào KHÔNG có câu hỏi trong ma trận (số lượng = 0), hãy bỏ qua tiêu đề phần đó, but các phần còn lại vẫn phải giữ đúng thứ tự trên. TUYỆT ĐỐI KHÔNG đảo lộn thứ tự này.
-
-        12. **ĐỊNH DẠNG TIÊU ĐỀ CÂU HỎI (TUYỆT ĐỐI BẮT BUỘC):**
-           - **CHỈ GHI:** "Câu 1:", "Câu 2:", "Câu 3:", ...
-           - **TUYỆT ĐỐI KHÔNG GHI:** Mức độ nhận thức (NB, TH, VD, VDC) vào tiêu đề câu hỏi.
-           - **TUYỆT ĐỐI KHÔNG GHI:** Điểm số (0.25đ, 1.0đ) vào tiêu đề câu hỏi.
-           - Ví dụ **SAI**: "Câu 1 (NB):", "Câu 1 (0.25đ):", "Câu 1 (NB - 0.25đ):".
-           - Ví dụ **ĐÚNG**: "**Câu 1:**".
-
-        13. **XÁO TRỘN ĐÁP ÁN ĐÚNG CHO CÂU HỎI MỚI (QUAN TRỌNG):**
-           - Với ${100 - similarityPercentage}% câu hỏi tự tạo mới, bạn PHẢI xáo trộn vị trí đáp án đúng (A, B, C, D) một cách ngẫu nhiên và phân bổ đều, không để một đáp án nào chiếm tỷ lệ quá cao.
+        --- QUY TẮC TẠO ĐỀ (BẮT BUỘC) ---
+        1.  **TUÂN THỦ MA TRẬN:** Đề thi phải tuân thủ CHÍNH XÁC 100% về số lượng câu hỏi, điểm số, và mức độ nhận thức như ma trận.
+        2.  **4 ĐÁP ÁN TRẮC NGHIỆM (CỰC KỲ QUAN TRỌNG):** Mỗi câu hỏi trắc nghiệm nhiều phương án lựa chọn **BẮT BUỘC PHẢI CÓ ĐỦ 4 PHƯƠNG ÁN A, B, C, D**. Tuyệt đối không được thiếu phương án nào.
+        3.  **BẢO TOÀN SỐ Ý CÂU ĐÚNG/SAI (CỰC KỲ QUAN TRỌNG):** Mỗi câu hỏi Đúng/Sai PHẢI có chính xác **${soYTrongCauDungSai} ý nhỏ** (a, b, c, d...). Giữ nguyên CẤU TRÚC và SỐ LƯỢNG ý nhỏ của các câu hỏi Đúng/Sai từ Ngân hàng câu hỏi. LƯU Ý: Các ý nhỏ trong Ngân hàng câu hỏi đã có sẵn chữ cái "a. ", "b. ", "c. " ở đầu câu. Khi sao chép vào đề thi, TUYỆT ĐỐI KHÔNG được thêm một chữ cái "a. " hay "b. " nào nữa vào trước nó để tránh lỗi lặp chữ (ví dụ lỗi sai: "a. a. Máy tính...", lỗi đúng: "a. Máy tính...").
+        4.  **XÁO TRỘN ĐÁP ÁN ĐÚNG (CỰC KỲ QUAN TRỌNG):** Đối với các câu trắc nghiệm, bạn PHẢI xáo trộn vị trí đáp án đúng một cách ngẫu nhiên tuyệt đối giữa A, B, C, D. 
+        5.  **PHÂN BỔ ĐÁP ÁN ĐỀU:** Đảm bảo số lượng đáp án đúng là A, B, C, D trong toàn bộ đề thi phải xấp xỉ bằng nhau (ví dụ: mỗi loại chiếm khoảng 25%). TUYỆT ĐỐI không để một chữ cái nào (như B) xuất hiện áp đảo.
+        6.  **QUY TẮC VỀ KÝ HIỆU TOÁN HỌC:** Chỉ sử dụng LaTeX ($...$ hoặc $$...$$) cho công thức. Không dùng $ cho văn bản thường.
+        7.  **TÁCH TRANG ĐÁP ÁN:** Chèn \`<div style="page-break-before: always;"></div>\` trước phần ĐÁP ÁN.
+        8.  **ĐỊNH DẠNG BẢNG ĐÁP ÁN:** Dùng bảng NGANG cho đáp án trắc nghiệm ở cuối đề.
+        9.  **ĐỊNH DẠNG TABLE CHO ĐÁP ÁN:** BẮT BUỘC dùng HTML TABLE không viền (border="0") để trình bày 4 phương án A, B, C, D theo cấu trúc **2 dòng 2 cột** (A và B ở dòng trên, C và D ở dòng dưới). TUYỆT ĐỐI KHÔNG dàn hàng ngang 4 cột. Cấu trúc HTML BẮT BUỘC: \`<table style="width:100%; border:none; table-layout:fixed;"><tr><td style="border:none; width:50%;">A. ...</td><td style="border:none; width:50%;">B. ...</td></tr><tr><td style="border:none; width:50%;">C. ...</td><td style="border:none; width:50%;">D. ...</td></tr></table>\`. Phải chia đều 50% khoảng cách 2 cột.
+        10. **KIỂM TRA TỶ LỆ:** Trước khi xuất kết quả, hãy tự đếm lại bảng đáp án. Nếu có quá nhiều đáp án giống nhau nằm liên tiếp hoặc một chữ cái xuất hiện quá nhiều, hãy hoán vị lại phương án của các câu hỏi đó.
 
         ${formatInstruction}
 
-        --- ĐỊNH DẠNG ĐẦU RA (JSON) ---
-        Bạn PHẢI trả lời dưới dạng một đối tượng JSON duy nhất, không có văn bản giải thích nào khác. Cấu trúc JSON phải là:
-        {
-          "exams": [
-            "Nội dung HTML của đề thi số 1 ở đây",
-            "Nội dung HTML của đề thi số 2 ở đây"
-          ]
-        }
+        --- ĐỊNH DẠNG ĐẦU RA (HTML THUẦN TÚY) ---
+        TRẢ VỀ TRỰC TIẾP ĐOẠN MÃ HTML CỦA ĐỀ THI. KHÔNG BAO BỌC TRONG BẤT KỲ JSON NÀO, VÀ KHÔNG KÈM THEO LỜI GIẢI THÍCH.
     `;
 
-    // --- SỬ DỤNG callWithRetry ---
-    const response = await callWithRetry<GenerateContentResponse>(() => ai.models.generateContent({ 
-        model, 
-        contents: prompt,
-        config: { responseMimeType: "application/json" }
-    }));
-    const text = response.text || "";
-    const jsonString = extractJson(text);
+  const response = await callWithRetry<GenerateContentResponse>(() => 
+    getAiClient().models.generateContent({
+      model,
+      contents: prompt,
+      // KHÔNG sử dụng responseMimeType: "application/json" ở đây để tránh lỗi escape HTML quá dài gây đứng chương trình
+    })
+  );
 
-    if (!jsonString) {
-        console.error("Failed to extract JSON from exam generation response:", text);
-        throw new Error("AI không trả về dữ liệu JSON hợp lệ cho đề thi.");
-    }
+  let text = response.text || "";
+  
+  // Xóa các block markdown ```html ... ``` nếu có
+  const htmlMatch = text.match(/```(?:html)?\s*([\s\S]*?)```/);
+  if (htmlMatch && htmlMatch[1]) {
+    text = htmlMatch[1].trim();
+  } else {
+    text = text.trim();
+  }
+  
+  if (!text) {
+    throw new Error(`Lỗi: AI trả về phản hồi rỗng cho đề số ${index}.`);
+  }
+  
+  return text;
+};
 
-    try {
-        const parsed = JSON.parse(jsonString);
-        if (!parsed.exams || !Array.isArray(parsed.exams) || parsed.exams.length < 1) {
-            throw new Error("Dữ liệu JSON từ AI cho đề thi không đúng định dạng hoặc không có nội dung.");
-        }
-        return parsed.exams;
-    } catch (e) {
-        console.error("Failed to parse JSON response for exams:", jsonString);
-        throw new Error("Lỗi khi phân tích dữ liệu JSON đề thi từ AI.");
+export const generateExams = async (
+  reviewFileContent: string,
+  matrix: string,
+  sgkFileContent: string,
+  similarityPercentage: number,
+  examTemplateContent?: string,
+  startIndex: number = 1,
+  count: number = 3,
+  soYTrongCauDungSai: number = 4
+): Promise<string[]> => {
+  const reviewText = fileToText(reviewFileContent, "Ngân hàng câu hỏi ôn tập");
+  const matrixText = `--- BẮT ĐẦU MA TRẬN ---\n${matrix}\n--- KẾT THÚC MA TRẬN ---`;
+
+  console.log(`Bắt đầu tạo ${count} đề thi tuần tự từ đề ${startIndex}...`);
+
+  const exams: string[] = [];
+  const indices = Array.from({length: count}, (_, i) => startIndex + i);
+
+  try {
+    for (const i of indices) {
+      console.log(`Đang tạo đề thi số ${i}...`);
+      const exam = await generateSingleExam(i, reviewText, matrixText, "", similarityPercentage, examTemplateContent, soYTrongCauDungSai);
+      exams.push(exam);
+      console.log(`Đã hoàn thành đề thi số ${i}.`);
+      // Delay 2 giây giữa các lần gọi để tránh rate limit (429)
+      if (i < indices[indices.length - 1]) await wait(2000); 
     }
+    return exams;
+  } catch (error) {
+    console.error("Lỗi khi tạo các đề thi:", error);
+    throw error;
+  }
 };

@@ -1,7 +1,7 @@
 {
-  "name": "github-app-tạo-đề-kiểm-tra-+-ma-trận-đặc-tả-cv-7991-(ai)-ver-4.0-(-đã-bỏ-$)",
+  "name": "dekt4-app-tao-de-kiem-tra",
   "private": true,
-  "version": "0.0.0",
+  "version": "4.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,15 +9,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "vite": "^7.2.7",
-    "@vitejs/plugin-react": "^5.1.2",
     "react": "^19.2.3",
-    "@google/genai": "^1.33.0",
-    "react-dom": "^19.2.3"
+    "react-dom": "^19.2.3",
+    "@google/genai": "^1.33.0"
   },
   "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
     "@types/node": "^22.14.0",
-    "@vitejs/plugin-react": "^5.0.0",
+    "@vitejs/plugin-react": "^5.1.2",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }
