@@ -58,3 +58,8 @@ export interface User {
 }
 
 export type TabName = 'tab1' | 'tab2' | 'tab3' | 'tab4' | 'tab5' | 'tab6' | 'tab7';
+
+export const GEMINI_MODELS = [
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Khuyên dùng)' },
+  { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash' }
+];
