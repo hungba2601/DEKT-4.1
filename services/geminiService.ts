@@ -3,9 +3,11 @@ import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import type { MatrixConfig, SpecData } from '../types';
 
 let userApiKey: string | null = null;
+let currentAiModel: string = 'gemini-2.5-flash';
 
-export const setGeminiApiKey = (key: string) => {
+export const setGeminiConfig = (key: string, model: string = 'gemini-2.5-flash') => {
   userApiKey = key;
+  currentAiModel = model;
 };
 
 const getAiClient = () => {
@@ -144,9 +146,6 @@ const fileToText = (fileContent: string, fileName: string): string => {
   return `--- BẮT ĐẦU NỘI DUNG FILE: ${fileName} ---\n\n${fileContent}\n\n--- KẾT THÚC NỘI DUNG FILE: ${fileName} ---`;
 };
 
-// Sử dụng model Flash để đảm bảo tốc độ và hạn mức miễn phí cao, tránh lỗi 429
-const AI_MODEL = 'gemini-2.5-flash';
-
 // ------------------------------
 // CƠ CHẾ TẠM DỪNG VÀ CHỜ API KEY MỚI
 // ------------------------------
@@ -182,7 +181,7 @@ const callWithRetry = async <T>(
         // Gọi handler để mở modal và chờ người dùng nhập key mới
         const newKey = await onQuotaExceededHandler();
         if (newKey) {
-          setGeminiApiKey(newKey);
+          setGeminiConfig(newKey, currentAiModel);
           console.log("Đã nhận API Key mới. Đang thử lại tiến trình...");
           // Thử lại ngay lập tức với key mới
           return callWithRetry(fn, retries, delay);
@@ -230,7 +229,7 @@ export const generateMatrixAndSpec = async (
   config: MatrixConfig,
   examTitle: string
 ): Promise<{ matrix: string; spec: SpecData }> => {
-  const model = AI_MODEL;
+  const model = currentAiModel;
   const sgkText = fileToText(sgkFileContent, "Sách giáo khoa (Toàn bộ nội dung)");
   const curriculumText = fileToText(curriculumFileContent, "Phân phối chương trình");
   const finalExamTitle = examTitle ? ` ${examTitle.toUpperCase()}` : '';
@@ -522,7 +521,7 @@ export const generateReviewQuestions = async (
   spec: SpecData,
   config: MatrixConfig
 ): Promise<string> => {
-  const model = AI_MODEL;
+  const model = currentAiModel;
   const sgkText = fileToText(sgkFileContent, "Sách giáo khoa");
   const matrixText = `--- BẮT ĐẦU MA TRẬN ---\n${matrix}\n--- KẾT THÚC MA TRẬN ---`;
   const specText = `--- BẮT ĐẦU BẢN ĐẶC TẢ ---\n${JSON.stringify(spec, null, 2)}\n--- KẾT THÚC BẢN ĐẶC TẢ ---`;
@@ -630,7 +629,7 @@ const generateSingleExam = async (
   examTemplateContent?: string,
   soYTrongCauDungSai: number = 4
 ): Promise<string> => {
-  const model = AI_MODEL;
+  const model = currentAiModel;
 
   const similarityInstruction = `
         --- QUY TẮC VỀ NGUỒN CÂU HỎI (CỰC KỲ QUAN TRỌNG) ---
