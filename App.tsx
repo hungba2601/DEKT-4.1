@@ -13,7 +13,7 @@ import { ThemeSwitcher } from './components/ThemeSwitcher';
 import LoginScreen from './components/LoginScreen';
 import ChangePasswordModal from './components/ChangePasswordModal';
 import ApiKeyModal from './components/ApiKeyModal';
-import { setGeminiApiKey, setOnQuotaExceeded } from './services/geminiService';
+import { setGeminiConfig, setOnQuotaExceeded } from './services/geminiService';
 import type { MatrixConfig, SpecData, User, TabName } from './types';
 import { useRef } from 'react';
 
@@ -85,6 +85,7 @@ const App: React.FC = () => {
 
   // API Key State
   const [apiKey, setApiKey] = useState<string>('');
+  const [aiModel, setAiModel] = useState<string>('gemini-2.5-flash');
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState<boolean>(false);
   const [isQuotaExceeded, setIsQuotaExceeded] = useState<boolean>(false);
   const quotaExceededResolvers = useRef<((key: string) => void)[]>([]);
@@ -92,9 +93,11 @@ const App: React.FC = () => {
   // Load saved API Key and register Quota Exceeded handler
   useEffect(() => {
     const savedKey = localStorage.getItem('gemini_api_key');
+    const savedModel = localStorage.getItem('ai_model') || 'gemini-2.5-flash';
     if (savedKey) {
       setApiKey(savedKey);
-      setGeminiApiKey(savedKey);
+      setAiModel(savedModel);
+      setGeminiConfig(savedKey, savedModel);
     }
 
     // Đăng ký cơ chế tạm dừng khi hết hạn mức API
@@ -107,10 +110,12 @@ const App: React.FC = () => {
     });
   }, []);
 
-  const handleSaveApiKey = (key: string) => {
+  const handleSaveApiKey = (key: string, model: string) => {
     setApiKey(key);
-    setGeminiApiKey(key);
+    setAiModel(model);
+    setGeminiConfig(key, model);
     localStorage.setItem('gemini_api_key', key);
+    localStorage.setItem('ai_model', model);
 
     // Nếu chúng ta đang trong trạng thái tạm dừng do hết quota
     if (quotaExceededResolvers.current.length > 0) {
@@ -548,6 +553,7 @@ const App: React.FC = () => {
           onClose={handleCloseApiKeyModal}
           onSave={handleSaveApiKey}
           currentKey={apiKey}
+          currentModel={aiModel}
           isQuotaExceeded={isQuotaExceeded}
         />
         <footer className="text-center py-4 text-gray-600 dark:text-gray-400 text-sm">
