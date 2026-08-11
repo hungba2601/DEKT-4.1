@@ -90,6 +90,33 @@ const getCount = (count: number | undefined) => {
     return count && count > 0 ? count : '';
 };
 
+// Helper: get letter label for DS ý (0 -> 'a', 1 -> 'b', ...)
+const getLetterLabel = (index: number): string => String.fromCharCode(97 + index);
+
+// Helper: format DS ý display, e.g. "2 (1a,1b)"
+// dsQuestionNumber: the sequential DS question number across all rows
+// yCount: number of ý at this level
+// startLetterIndex: the starting letter index (0-based) for this level's ý
+const formatDsY = (dsQuestionNumber: number, yCount: number, startLetterIndex: number): string => {
+    if (!yCount || yCount <= 0) return '';
+    const labels: string[] = [];
+    for (let i = 0; i < yCount; i++) {
+        labels.push(`${dsQuestionNumber}${getLetterLabel(startLetterIndex + i)}`);
+    }
+    return `${yCount} (${labels.join(',')})`;
+};
+
+// Helper: format standard questions, e.g. "2 (C1,2)"
+const formatQ = (count: number, startQNum: number): string => {
+    if (!count || count <= 0) return '';
+    if (count === 1) return `1 (C${startQNum})`;
+    const labels: string[] = [`C${startQNum}`];
+    for (let i = 1; i < count; i++) {
+        labels.push(`${startQNum + i}`);
+    }
+    return `${count} (${labels.join(',')})`;
+};
+
 const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle, matrixConfig }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingContent, setEditingContent] = useState({ text: '', topicIndex: -1, rowIndex: -1 });
@@ -145,14 +172,13 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
     });
 
     const tn_total_count = t.tn_biet + t.tn_hieu + t.tn_vd;
-    const ds_total_count = t.ds_biet + t.ds_hieu + t.ds_vd;
+    const ds_total_y = t.ds_biet + t.ds_hieu + t.ds_vd; // Tổng số ý ĐS
     const tngan_total_count = t.tngan_biet + t.tngan_hieu + t.tngan_vd;
     const tl_total_count = t.tl_biet + t.tl_hieu + t.tl_vd;
 
     const tn_points = tn_total_count * Number(matrixConfig.diemCauNhieuLuaChon);
-    // Điểm câu đúng sai: Số câu hỏi * (Số ý * Điểm mỗi ý)
-    const ds_point_per_q = Number(matrixConfig.soYTrongCauDungSai) * Number(matrixConfig.diemMoiYTrongCauDungSai);
-    const ds_points = ds_total_count * ds_point_per_q;
+    // Điểm đúng sai: Số ý * Điểm mỗi ý (vì DS giờ lưu số ý, không phải số câu)
+    const ds_points = ds_total_y * Number(matrixConfig.diemMoiYTrongCauDungSai);
     const tngan_points = tngan_total_count * Number(matrixConfig.diemCauTraLoiNgan);
     const tl_points = tl_total_count * Number(matrixConfig.diemCauTuLuan);
 
@@ -202,7 +228,7 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
             <th rowspan="4" style="width: 15%;">Chủ đề/Chương</th>
             <th rowspan="4" style="width: 20%;">Nội dung/đơn vị kiến thức</th>
             <th rowspan="4" style="width: 25%;">Yêu cầu cần đạt</th>
-            <th colspan="12">Số câu hỏi ở các mức độ đánh giá</th>
+            <th colspan="12">Mức độ đánh giá</th>
           </tr>
           <tr class="bg-header">
              <th colspan="9">TNKQ</th>
@@ -210,7 +236,7 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
           </tr>
           <tr class="bg-header">
              <th colspan="3">Nhiều lựa chọn</th>
-             <th colspan="3">“Đúng – Sai”</th>
+             <th colspan="3">TNKQ-Đúng /Sai</th>
              <th colspan="3">Trả lời ngắn</th>
              <th rowspan="2">Biết</th>
              <th rowspan="2">Hiểu</th>
@@ -224,6 +250,11 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
         </thead>
         <tbody>
     `;
+
+    let exportDsQCounter = 0; // Đếm số thứ tự câu ĐS cho xuất Word
+    let exportTnQCounter = 1;
+    let exportTnganQCounter = 1;
+    let exportTlQCounter = 1;
 
     generatedSpec.forEach((topic, topicIndex) => {
       const sanitizedChuDe = topic.chuDe.replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -243,41 +274,79 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
         tableHtml += `<td class="text-left">${sanitize(row.yeuCauCanDat)}</td>`;
         
         // TN Nhiều lựa chọn
-        tableHtml += `<td>${getCount(row.soCau.nhanBiet.TN)}</td>`;
-        tableHtml += `<td>${getCount(row.soCau.thongHieu.TN)}</td>`;
-        tableHtml += `<td>${getCount((row.soCau.vanDung.TN || 0) + (row.soCau.vanDungCao.TN || 0))}</td>`;
+        const tn_nb = row.soCau.nhanBiet.TN || 0;
+        const tn_th = row.soCau.thongHieu.TN || 0;
+        const tn_vd = (row.soCau.vanDung.TN || 0) + (row.soCau.vanDungCao.TN || 0);
 
-        // TN Đúng Sai
-        tableHtml += `<td>${getCount(row.soCau.nhanBiet.DS)}</td>`;
-        tableHtml += `<td>${getCount(row.soCau.thongHieu.DS)}</td>`;
-        tableHtml += `<td>${getCount((row.soCau.vanDung.DS || 0) + (row.soCau.vanDungCao.DS || 0))}</td>`;
+        const tnNbStr = tn_nb > 0 ? formatQ(tn_nb, exportTnQCounter) : '';
+        exportTnQCounter += tn_nb;
+        const tnThStr = tn_th > 0 ? formatQ(tn_th, exportTnQCounter) : '';
+        exportTnQCounter += tn_th;
+        const tnVdStr = tn_vd > 0 ? formatQ(tn_vd, exportTnQCounter) : '';
+        exportTnQCounter += tn_vd;
+
+        tableHtml += `<td>${tnNbStr}</td>`;
+        tableHtml += `<td>${tnThStr}</td>`;
+        tableHtml += `<td>${tnVdStr}</td>`;
+
+        // TN Đúng Sai - Hiển thị số ý
+        const ds_nb = row.soCau.nhanBiet.DS || 0;
+        const ds_th = row.soCau.thongHieu.DS || 0;
+        const ds_vd = (row.soCau.vanDung.DS || 0) + (row.soCau.vanDungCao.DS || 0);
+        const hasDsY = ds_nb + ds_th + ds_vd > 0;
+        if (hasDsY) exportDsQCounter++;
+        tableHtml += `<td>${hasDsY ? formatDsY(exportDsQCounter, ds_nb, 0) : ''}</td>`;
+        tableHtml += `<td>${hasDsY ? formatDsY(exportDsQCounter, ds_th, ds_nb) : ''}</td>`;
+        tableHtml += `<td>${hasDsY ? formatDsY(exportDsQCounter, ds_vd, ds_nb + ds_th) : ''}</td>`;
 
         // TN Trả lời ngắn
-        tableHtml += `<td>${getCount(row.soCau.nhanBiet.TNgan)}</td>`;
-        tableHtml += `<td>${getCount(row.soCau.thongHieu.TNgan)}</td>`;
-        tableHtml += `<td>${getCount((row.soCau.vanDung.TNgan || 0) + (row.soCau.vanDungCao.TNgan || 0))}</td>`;
+        const tngan_nb = row.soCau.nhanBiet.TNgan || 0;
+        const tngan_th = row.soCau.thongHieu.TNgan || 0;
+        const tngan_vd = (row.soCau.vanDung.TNgan || 0) + (row.soCau.vanDungCao.TNgan || 0);
+
+        const tnganNbStr = tngan_nb > 0 ? formatQ(tngan_nb, exportTnganQCounter) : '';
+        exportTnganQCounter += tngan_nb;
+        const tnganThStr = tngan_th > 0 ? formatQ(tngan_th, exportTnganQCounter) : '';
+        exportTnganQCounter += tngan_th;
+        const tnganVdStr = tngan_vd > 0 ? formatQ(tngan_vd, exportTnganQCounter) : '';
+        exportTnganQCounter += tngan_vd;
+
+        tableHtml += `<td>${tnganNbStr}</td>`;
+        tableHtml += `<td>${tnganThStr}</td>`;
+        tableHtml += `<td>${tnganVdStr}</td>`;
 
         // Tự luận
-        tableHtml += `<td>${getCount(row.soCau.nhanBiet.TL)}</td>`;
-        tableHtml += `<td>${getCount(row.soCau.thongHieu.TL)}</td>`;
-        tableHtml += `<td>${getCount((row.soCau.vanDung.TL || 0) + (row.soCau.vanDungCao.TL || 0))}</td>`;
+        const tl_nb = row.soCau.nhanBiet.TL || 0;
+        const tl_th = row.soCau.thongHieu.TL || 0;
+        const tl_vd = (row.soCau.vanDung.TL || 0) + (row.soCau.vanDungCao.TL || 0);
+
+        const tlNbStr = tl_nb > 0 ? formatQ(tl_nb, exportTlQCounter) : '';
+        exportTlQCounter += tl_nb;
+        const tlThStr = tl_th > 0 ? formatQ(tl_th, exportTlQCounter) : '';
+        exportTlQCounter += tl_th;
+        const tlVdStr = tl_vd > 0 ? formatQ(tl_vd, exportTlQCounter) : '';
+        exportTlQCounter += tl_vd;
+
+        tableHtml += `<td>${tlNbStr}</td>`;
+        tableHtml += `<td>${tlThStr}</td>`;
+        tableHtml += `<td>${tlVdStr}</td>`;
 
         tableHtml += `</tr>`;
       });
     });
     
     // Tổng cộng Footer (Rows)
-    // Row 1: Tổng số câu
+    // Row 1: Tổng số câu / số ý
     tableHtml += `
         <tr style="font-weight: bold; background-color: #f0f0f0;">
-            <td colspan="4" style="text-align: center;">Tổng số câu</td>
+            <td colspan="4" style="text-align: center;">Tổng số câu, ý</td>
             <td>${getCount(totals.counts.tn_biet)}</td>
             <td>${getCount(totals.counts.tn_hieu)}</td>
             <td>${getCount(totals.counts.tn_vd)}</td>
             
-            <td>${getCount(totals.counts.ds_biet)}</td>
-            <td>${getCount(totals.counts.ds_hieu)}</td>
-            <td>${getCount(totals.counts.ds_vd)}</td>
+            <td>${totals.counts.ds_biet > 0 ? `${totals.counts.ds_biet} ý` : ''}</td>
+            <td>${totals.counts.ds_hieu > 0 ? `${totals.counts.ds_hieu} ý` : ''}</td>
+            <td>${totals.counts.ds_vd > 0 ? `${totals.counts.ds_vd} ý` : ''}</td>
             
             <td>${getCount(totals.counts.tngan_biet)}</td>
             <td>${getCount(totals.counts.tngan_hieu)}</td>
@@ -350,7 +419,7 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
                 <th rowSpan={4} className="border border-gray-300 dark:border-gray-600 px-2 py-2 w-48 text-center">Chủ đề/Chương</th>
                 <th rowSpan={4} className="border border-gray-300 dark:border-gray-600 px-2 py-2 w-64 text-center">Nội dung/đơn vị kiến thức</th>
                 <th rowSpan={4} className="border border-gray-300 dark:border-gray-600 px-2 py-2 min-w-[300px] text-center">Yêu cầu cần đạt</th>
-                <th colSpan={12} className="border border-gray-300 dark:border-gray-600 px-2 py-2 text-center">Số câu hỏi ở các mức độ đánh giá</th>
+                <th colSpan={12} className="border border-gray-300 dark:border-gray-600 px-2 py-2 text-center">Mức độ đánh giá</th>
               </tr>
               <tr>
                  <th colSpan={9} className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center bg-blue-50 dark:bg-blue-900/30">TNKQ</th>
@@ -359,7 +428,7 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
               <tr>
                  {/* TNKQ Sub-headers */}
                  <th colSpan={3} className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center font-medium">Nhiều lựa chọn</th>
-                 <th colSpan={3} className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center font-medium">“Đúng – Sai”</th>
+                 <th colSpan={3} className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center font-medium">TNKQ-Đúng /Sai</th>
                  <th colSpan={3} className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center font-medium">Trả lời ngắn</th>
                  {/* TL Levels */}
                  <th rowSpan={2} className="border border-gray-300 dark:border-gray-600 px-1 py-1 w-10 text-center font-normal bg-green-50/50 dark:bg-green-900/20">Biết</th>
@@ -382,13 +451,64 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
               </tr>
             </thead>
             <tbody className="text-gray-700 dark:text-gray-300">
-              {generatedSpec.map((topic, topicIndex) => (
-                <React.Fragment key={topicIndex}>
+              {(() => {
+                let dsQuestionCounter = 0; // Đếm số thứ tự câu ĐS toàn bộ bảng
+                let tnQuestionCounter = 1;
+                let tnganQuestionCounter = 1;
+                let tlQuestionCounter = 1;
+
+                return generatedSpec.map((topic, topicIndex) => (
+                  <React.Fragment key={topicIndex}>
                     {topic.rows.map((row, rowIndex) => {
                         const vd_tn = (row.soCau.vanDung.TN || 0) + (row.soCau.vanDungCao.TN || 0);
                         const vd_ds = (row.soCau.vanDung.DS || 0) + (row.soCau.vanDungCao.DS || 0);
                         const vd_tngan = (row.soCau.vanDung.TNgan || 0) + (row.soCau.vanDungCao.TNgan || 0);
                         const vd_tl = (row.soCau.vanDung.TL || 0) + (row.soCau.vanDungCao.TL || 0);
+
+                        // Tính TN Nhiều lựa chọn display
+                        const tn_nb = row.soCau.nhanBiet.TN || 0;
+                        const tn_th = row.soCau.thongHieu.TN || 0;
+                        const tnNbDisplay = tn_nb > 0 ? formatQ(tn_nb, tnQuestionCounter) : '';
+                        tnQuestionCounter += tn_nb;
+                        const tnThDisplay = tn_th > 0 ? formatQ(tn_th, tnQuestionCounter) : '';
+                        tnQuestionCounter += tn_th;
+                        const tnVdDisplay = vd_tn > 0 ? formatQ(vd_tn, tnQuestionCounter) : '';
+                        tnQuestionCounter += vd_tn;
+
+                        // Tính DS ý display
+                        const ds_nb = row.soCau.nhanBiet.DS || 0;
+                        const ds_th = row.soCau.thongHieu.DS || 0;
+                        const ds_vd_total = vd_ds;
+                        const hasDsY = ds_nb + ds_th + ds_vd_total > 0;
+                        let currentDsQNum = 0;
+                        if (hasDsY) {
+                            dsQuestionCounter++;
+                            currentDsQNum = dsQuestionCounter;
+                        }
+                        // Tính vị trí chữ cái: NB lấy từ 0, TH lấy từ ds_nb, VD lấy từ ds_nb+ds_th
+                        const dsNbDisplay = hasDsY ? formatDsY(currentDsQNum, ds_nb, 0) : '';
+                        const dsThDisplay = hasDsY ? formatDsY(currentDsQNum, ds_th, ds_nb) : '';
+                        const dsVdDisplay = hasDsY ? formatDsY(currentDsQNum, ds_vd_total, ds_nb + ds_th) : '';
+
+                        // Tính TN Trả lời ngắn display
+                        const tngan_nb = row.soCau.nhanBiet.TNgan || 0;
+                        const tngan_th = row.soCau.thongHieu.TNgan || 0;
+                        const tnganNbDisplay = tngan_nb > 0 ? formatQ(tngan_nb, tnganQuestionCounter) : '';
+                        tnganQuestionCounter += tngan_nb;
+                        const tnganThDisplay = tngan_th > 0 ? formatQ(tngan_th, tnganQuestionCounter) : '';
+                        tnganQuestionCounter += tngan_th;
+                        const tnganVdDisplay = vd_tngan > 0 ? formatQ(vd_tngan, tnganQuestionCounter) : '';
+                        tnganQuestionCounter += vd_tngan;
+
+                        // Tính Tự luận display
+                        const tl_nb = row.soCau.nhanBiet.TL || 0;
+                        const tl_th = row.soCau.thongHieu.TL || 0;
+                        const tlNbDisplay = tl_nb > 0 ? formatQ(tl_nb, tlQuestionCounter) : '';
+                        tlQuestionCounter += tl_nb;
+                        const tlThDisplay = tl_th > 0 ? formatQ(tl_th, tlQuestionCounter) : '';
+                        tlQuestionCounter += tl_th;
+                        const tlVdDisplay = vd_tl > 0 ? formatQ(vd_tl, tlQuestionCounter) : '';
+                        tlQuestionCounter += vd_tl;
 
                         return (
                             <tr key={`${topicIndex}-${rowIndex}`} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
@@ -418,43 +538,44 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
                                 </td>
 
                                 {/* TN Nhiều lựa chọn */}
-                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(row.soCau.nhanBiet.TN)}</td>
-                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(row.soCau.thongHieu.TN)}</td>
-                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(vd_tn)}</td>
+                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center text-xs">{tnNbDisplay}</td>
+                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center text-xs">{tnThDisplay}</td>
+                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center text-xs">{tnVdDisplay}</td>
 
-                                {/* TN Đúng Sai */}
-                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(row.soCau.nhanBiet.DS)}</td>
-                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(row.soCau.thongHieu.DS)}</td>
-                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(vd_ds)}</td>
+                                {/* TN Đúng Sai - Hiển thị số ý */}
+                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center text-xs">{dsNbDisplay}</td>
+                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center text-xs">{dsThDisplay}</td>
+                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center text-xs">{dsVdDisplay}</td>
 
                                 {/* TN Trả lời ngắn */}
-                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(row.soCau.nhanBiet.TNgan)}</td>
-                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(row.soCau.thongHieu.TNgan)}</td>
-                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(vd_tngan)}</td>
+                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center text-xs">{tnganNbDisplay}</td>
+                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center text-xs">{tnganThDisplay}</td>
+                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center text-xs">{tnganVdDisplay}</td>
 
                                 {/* Tự luận */}
-                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(row.soCau.nhanBiet.TL)}</td>
-                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(row.soCau.thongHieu.TL)}</td>
-                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(vd_tl)}</td>
+                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center text-xs">{tlNbDisplay}</td>
+                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center text-xs">{tlThDisplay}</td>
+                                <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center text-xs">{tlVdDisplay}</td>
                             </tr>
                         );
                     })}
-                </React.Fragment>
-              ))}
+                  </React.Fragment>
+                ));
+              })()}
             </tbody>
              <tfoot className="bg-gray-200 dark:bg-gray-900 font-bold text-gray-800 dark:text-gray-200">
-                {/* Row 1: Tổng số câu */}
+                {/* Row 1: Tổng số câu / số ý */}
                 <tr>
-                    <td colSpan={4} className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-center">Tổng số câu</td>
+                    <td colSpan={4} className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-center">Tổng số câu, ý</td>
                     {/* Totals for NLC */}
                     <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(totals.counts.tn_biet)}</td>
                     <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(totals.counts.tn_hieu)}</td>
                     <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(totals.counts.tn_vd)}</td>
                     
-                    {/* Totals for DS */}
-                    <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(totals.counts.ds_biet)}</td>
-                    <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(totals.counts.ds_hieu)}</td>
-                    <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(totals.counts.ds_vd)}</td>
+                    {/* Totals for DS - hiển thị X ý */}
+                    <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{totals.counts.ds_biet > 0 ? `${totals.counts.ds_biet} ý` : ''}</td>
+                    <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{totals.counts.ds_hieu > 0 ? `${totals.counts.ds_hieu} ý` : ''}</td>
+                    <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{totals.counts.ds_vd > 0 ? `${totals.counts.ds_vd} ý` : ''}</td>
                     
                     {/* Totals for TNgan */}
                     <td className="border border-gray-300 dark:border-gray-600 px-1 py-1 text-center">{getCount(totals.counts.tngan_biet)}</td>

@@ -11,6 +11,19 @@ interface Tab3ManualMatrixProps {
   onSaveSpec: (spec: SpecData) => void;
 }
 
+// Helper: get letter label for DS ý (0 -> 'a', 1 -> 'b', ...)
+const getLetterLabel = (index: number): string => String.fromCharCode(97 + index);
+
+// Helper: format DS ý display, e.g. "2 (1a,1b)"
+const formatDsY = (dsQuestionNumber: number, yCount: number, startLetterIndex: number): string => {
+    if (!yCount || yCount <= 0) return '';
+    const labels: string[] = [];
+    for (let i = 0; i < yCount; i++) {
+        labels.push(`${dsQuestionNumber}${getLetterLabel(startLetterIndex + i)}`);
+    }
+    return `${yCount} (${labels.join(',')})`;
+};
+
 // Helper to deep clone the spec data and zero out counts for initialization
 const createEmptySpec = (sourceSpec: SpecData): SpecData => {
   return sourceSpec.map(topic => ({
@@ -194,7 +207,8 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
         const totalTLCount = sumTL.nb + sumTL.th + sumTL.vd;
 
         const pointsTN = totalTNCount * config.diemCauNhieuLuaChon;
-        const pointsDS = totalDSCount * (config.soYTrongCauDungSai * config.diemMoiYTrongCauDungSai);
+        // DS giờ lưu số ý, không phải số câu -> điểm = số ý * điểm mỗi ý
+        const pointsDS = totalDSCount * config.diemMoiYTrongCauDungSai;
         const pointsTNgan = totalTNganCount * config.diemCauTraLoiNgan;
         const pointsTL = totalTLCount * config.diemCauTuLuan;
         
@@ -218,7 +232,7 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
             </tr>
             <tr>
                 <th colspan="3">Nhiều lựa chọn</th>
-                <th colspan="3">"Đúng - Sai"</th>
+                <th colspan="3">TNKQ-Đúng /Sai</th>
                 <th colspan="3">Trả lời ngắn</th>
                 <th colspan="3">Tự luận</th>
                 <th>Biết</th>
@@ -237,6 +251,10 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
                 <td></td>
             </tr>`;
         
+        let dsQuestionCounter = 0; // Đếm số thứ tự câu ĐS
+        let tnQuestionCounter = 1;
+        let tnganQuestionCounter = 1;
+        let tlQuestionCounter = 1;
         spec.forEach((topic) => {
             html += `<tr style="font-weight: bold; background-color: #f2f2f2;"><td>I</td><td colspan="17" style="text-align: left;">${topic.chuDe}</td></tr>`;
 
@@ -246,8 +264,9 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
                 const tnCount = s.nhanBiet.TN + s.thongHieu.TN + s.vanDung.TN;
                 const tnPoints = tnCount * config.diemCauNhieuLuaChon;
 
-                const dsCount = s.nhanBiet.DS + s.thongHieu.DS + s.vanDung.DS;
-                const dsPoints = dsCount * (config.soYTrongCauDungSai * config.diemMoiYTrongCauDungSai);
+                // DS giờ lưu số ý, điểm = số ý * điểm mỗi ý
+                const dsYCount = s.nhanBiet.DS + s.thongHieu.DS + s.vanDung.DS;
+                const dsPoints = dsYCount * config.diemMoiYTrongCauDungSai;
 
                 const tnganCount = s.nhanBiet.TNgan + s.thongHieu.TNgan + s.vanDung.TNgan;
                 const tnganPoints = tnganCount * config.diemCauTraLoiNgan;
@@ -257,37 +276,58 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
 
                 const rowTotalPoints = tnPoints + dsPoints + tnganPoints + tlPoints;
 
-                const fmt = (count: number, unitPoint: number) => {
+                const fmt = (count: number, unitPoint: number, startQNum: number) => {
                     if (!count) return "";
+                    let labelStr = `C${startQNum}`;
+                    if (count > 1) {
+                        const labels: string[] = [`C${startQNum}`];
+                        for (let i = 1; i < count; i++) {
+                            labels.push(`${startQNum + i}`);
+                        }
+                        labelStr = labels.join(',');
+                    }
                     const p = count * unitPoint;
-                    return `(${count} - ${parseFloat(p.toFixed(2))})`;
+                    return `${count} (${labelStr})<br/>(${parseFloat(p.toFixed(2))}đ)`;
                 };
                 
-                const fmtDS = (count: number) => {
-                     if (!count) return "";
-                     const p = count * (config.soYTrongCauDungSai * config.diemMoiYTrongCauDungSai);
-                     return `(${count} - ${parseFloat(p.toFixed(2))})`;
-                }
+                // DS ý display format
+                const ds_nb = s.nhanBiet.DS || 0;
+                const ds_th = s.thongHieu.DS || 0;
+                const ds_vd = s.vanDung.DS || 0;
+                const hasDsY = ds_nb + ds_th + ds_vd > 0;
+                if (hasDsY) dsQuestionCounter++;
+                const currentDsQNum = dsQuestionCounter;
+
+                // Format DS ý with points
+                const fmtDsY = (yCount: number, startIdx: number) => {
+                    if (!yCount) return "";
+                    const yLabel = formatDsY(currentDsQNum, yCount, startIdx);
+                    const p = yCount * config.diemMoiYTrongCauDungSai;
+                    return `${yLabel}<br/>(${parseFloat(p.toFixed(2))}đ)`;
+                };
 
                 html += `<tr>
                     <td>${row.tt}</td>
                     <td style="text-align: left;">${row.noiDung}</td>
                     
-                    <td>${fmt(s.nhanBiet.TN, config.diemCauNhieuLuaChon)}</td>
-                    <td>${fmt(s.thongHieu.TN, config.diemCauNhieuLuaChon)}</td>
-                    <td>${fmt(s.vanDung.TN, config.diemCauNhieuLuaChon)}</td>
+                    <td>${fmt(s.nhanBiet.TN, config.diemCauNhieuLuaChon, tnQuestionCounter)}</td>
+                    <td>${fmt(s.thongHieu.TN, config.diemCauNhieuLuaChon, tnQuestionCounter += (s.nhanBiet.TN || 0))}</td>
+                    <td>${fmt(s.vanDung.TN, config.diemCauNhieuLuaChon, tnQuestionCounter += (s.thongHieu.TN || 0))}</td>
+                    ${(() => { tnQuestionCounter += (s.vanDung.TN || 0); return ''; })()}
 
-                    <td>${fmtDS(s.nhanBiet.DS)}</td>
-                    <td>${fmtDS(s.thongHieu.DS)}</td>
-                    <td>${fmtDS(s.vanDung.DS)}</td>
+                    <td>${hasDsY ? fmtDsY(ds_nb, 0) : ''}</td>
+                    <td>${hasDsY ? fmtDsY(ds_th, ds_nb) : ''}</td>
+                    <td>${hasDsY ? fmtDsY(ds_vd, ds_nb + ds_th) : ''}</td>
 
-                    <td>${fmt(s.nhanBiet.TNgan, config.diemCauTraLoiNgan)}</td>
-                    <td>${fmt(s.thongHieu.TNgan, config.diemCauTraLoiNgan)}</td>
-                    <td>${fmt(s.vanDung.TNgan, config.diemCauTraLoiNgan)}</td>
+                    <td>${fmt(s.nhanBiet.TNgan, config.diemCauTraLoiNgan, tnganQuestionCounter)}</td>
+                    <td>${fmt(s.thongHieu.TNgan, config.diemCauTraLoiNgan, tnganQuestionCounter += (s.nhanBiet.TNgan || 0))}</td>
+                    <td>${fmt(s.vanDung.TNgan, config.diemCauTraLoiNgan, tnganQuestionCounter += (s.thongHieu.TNgan || 0))}</td>
+                    ${(() => { tnganQuestionCounter += (s.vanDung.TNgan || 0); return ''; })()}
 
-                    <td>${fmt(s.nhanBiet.TL, config.diemCauTuLuan)}</td>
-                    <td>${fmt(s.thongHieu.TL, config.diemCauTuLuan)}</td>
-                    <td>${fmt(s.vanDung.TL, config.diemCauTuLuan)}</td>
+                    <td>${fmt(s.nhanBiet.TL, config.diemCauTuLuan, tlQuestionCounter)}</td>
+                    <td>${fmt(s.thongHieu.TL, config.diemCauTuLuan, tlQuestionCounter += (s.nhanBiet.TL || 0))}</td>
+                    <td>${fmt(s.vanDung.TL, config.diemCauTuLuan, tlQuestionCounter += (s.thongHieu.TL || 0))}</td>
+                    ${(() => { tlQuestionCounter += (s.vanDung.TL || 0); return ''; })()}
                     
                     <td></td><td></td><td></td> 
                     <td>${rowTotalPoints > 0 ? ((rowTotalPoints/10)*100).toFixed(0) : 0}</td>
@@ -299,9 +339,9 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
         html += `</tbody>
         <tfoot>
             <tr style="font-weight: bold;">
-                <td colspan="2">Tổng số câu</td>
+                <td colspan="2">Tổng số câu, ý</td>
                 <td>${sumTN.nb || ''}</td><td>${sumTN.th || ''}</td><td>${sumTN.vd || ''}</td>
-                <td>${sumDS.nb || ''}</td><td>${sumDS.th || ''}</td><td>${sumDS.vd || ''}</td>
+                <td>${sumDS.nb > 0 ? `${sumDS.nb} ý` : ''}</td><td>${sumDS.th > 0 ? `${sumDS.th} ý` : ''}</td><td>${sumDS.vd > 0 ? `${sumDS.vd} ý` : ''}</td>
                 <td>${sumTNgan.nb || ''}</td><td>${sumTNgan.th || ''}</td><td>${sumTNgan.vd || ''}</td>
                 <td>${sumTL.nb || ''}</td><td>${sumTL.th || ''}</td><td>${sumTL.vd || ''}</td>
                 <td></td><td></td><td></td>
@@ -344,7 +384,8 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
       });
       
       const pTn = t.tn * matrixConfig.diemCauNhieuLuaChon;
-      const pDs = t.ds * (matrixConfig.soYTrongCauDungSai * matrixConfig.diemMoiYTrongCauDungSai);
+      // DS giờ lưu số ý, điểm = số ý * điểm mỗi ý
+      const pDs = t.ds * matrixConfig.diemMoiYTrongCauDungSai;
       const pTngan = t.tngan * matrixConfig.diemCauTraLoiNgan;
       const pTl = t.tl * matrixConfig.diemCauTuLuan;
       
@@ -385,7 +426,7 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
                     <strong> Dữ liệu sẽ được tự động lưu. Hãy nhấn "XÁC NHẬN" khi bạn hoàn tất để áp dụng ma trận này cho các bước sau.</strong>
                 </p>
                 <div className="mt-2 flex gap-4 text-sm font-medium">
-                    <span>Tổng số câu: TN({totals.tn}) - ĐS({totals.ds}) - Ngắn({totals.tngan}) - TL({totals.tl})</span>
+                    <span>Tổng số: TN({totals.tn}) - ĐS({totals.ds} ý) - Ngắn({totals.tngan}) - TL({totals.tl})</span>
                     <span className={Math.abs(totals.points - 10) > 0.1 ? "text-red-600 font-bold" : "text-green-600 font-bold"}>
                         Tổng điểm: {totals.points.toFixed(2)} / 10
                     </span>
@@ -419,7 +460,7 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
                     <tr className="bg-gray-100 dark:bg-gray-900 text-gray-700 dark:text-gray-200">
                         <th className="border p-2 min-w-[200px] text-left">Nội dung / Bài học</th>
                         <th className="border p-2 text-center bg-blue-50 dark:bg-blue-900/20" colSpan={3}>Trắc nghiệm (Nhiều lựa chọn)</th>
-                        <th className="border p-2 text-center bg-orange-50 dark:bg-orange-900/20" colSpan={3}>Đúng - Sai</th>
+                        <th className="border p-2 text-center bg-orange-50 dark:bg-orange-900/20" colSpan={3}>TNKQ-Đúng /Sai</th>
                         <th className="border p-2 text-center bg-purple-50 dark:bg-purple-900/20" colSpan={3}>Trả lời ngắn</th>
                         <th className="border p-2 text-center bg-green-50 dark:bg-green-900/20" colSpan={3}>Tự luận</th>
                     </tr>
