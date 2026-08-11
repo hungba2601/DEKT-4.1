@@ -236,6 +236,13 @@ export const generateMatrixAndSpec = async (
 
   let configRules = '';
 
+  // Tính phân bổ ý ĐS theo mức độ: Biết ưu tiên 2, phần còn lại san đều Hiểu và VD
+  const soY = config.soYTrongCauDungSai;
+  const dsBiet = Math.min(2, soY); // Biết ưu tiên 2 ý, hoặc tất cả nếu tổng < 2
+  const dsConLai = soY - dsBiet;
+  const dsHieu = Math.ceil(dsConLai / 2); // Hiểu lấy nửa trên
+  const dsVanDung = dsConLai - dsHieu; // VD lấy phần còn lại
+
   if (config.isTuLuan100) {
     const totalQuestions = config.soCauTuLuan;
     configRules = `
@@ -269,7 +276,8 @@ export const generateMatrixAndSpec = async (
         - **${config.soCauDungSai} câu trắc nghiệm Đúng-Sai.**
         - **${config.soCauTraLoiNgan} câu trắc nghiệm Trả lời ngắn.**
         - **${config.soCauTuLuan} câu Tự luận.**
-    - **CẤU TRÚC CÂU ĐÚNG-SAI:** Mỗi câu hỏi Đúng-Sai lớn phải bao gồm chính xác **${config.soYTrongCauDungSai} câu phát biểu nhỏ**.
+    - **CẤU TRÚC CÂU ĐÚNG-SAI:** Mỗi câu hỏi Đúng-Sai lớn phải bao gồm chính xác **${soY} câu phát biểu nhỏ (ý)**.
+    - **PHÂN BỔ Ý ĐÚNG-SAI THEO MỨC ĐỘ (BẮT BUỘC):** Mỗi câu Đúng-Sai có ${soY} ý phải được phân bổ vào các mức độ nhận thức như sau: **Nhận biết = ${dsBiet} ý, Thông hiểu = ${dsHieu} ý, Vận dụng = ${dsVanDung} ý**. Trong JSON đầu ra, trường "DS" trong mỗi mức độ phải ghi SỐ Ý (không phải số câu). Ví dụ: nếu bài X có 1 câu Đúng-Sai, thì soCau phải là: nhanBiet.DS = ${dsBiet}, thongHieu.DS = ${dsHieu}, vanDung.DS = ${dsVanDung}.
     - **PHÂN BỔ TỶ LỆ ĐIỂM (BẮT BUỘC TUYỆT ĐỐI - KHÔNG ĐƯỢC SAI LỆCH):**
         - Tỷ lệ điểm Trắc nghiệm / Tự luận: Chính xác ${config.tracNghiem}% / ${config.tuLuan}% (Tương đương ${tongDiemTracNghiem.toFixed(2)}đ / ${tongDiemTuLuan.toFixed(2)}đ)
         - Tỷ lệ điểm theo mức độ nhận thức:
@@ -335,7 +343,18 @@ export const generateMatrixAndSpec = async (
     -   **Body (tbody):**
         -   Mỗi **Chủ đề** xác định từ "File Phân phối chương trình" PHẢI bắt đầu bằng một hàng tiêu đề riêng, trong đó cột TT chứa số thứ tự La Mã, và một ô duy nhất sẽ gộp 17 cột còn lại để hiển thị tên chủ đề (ví dụ: <tr style="font-weight: bold; background-color: #f2f2f2;"><td>I</td><td colspan="17" style="text-align: left;">Tên Chủ đề 1...</td></tr>).
         -   Mỗi **Nội dung/đơn vị kiến thức** (tức là MỖI BÀI HỌC) PHẢI nằm trên một hàng '<tr>' riêng biệt và KHÔNG có cột "Chủ đề".
-        -   Trong các ô có câu hỏi, bạn PHẢI điền cả **số lượng câu hỏi và tổng điểm tương ứng** theo định dạng '(Số câu - Tổng điểm)'. Ví dụ: '(1 - 0.25)', '(2 - 1.0)'. Điểm phải có một hoặc hai chữ số thập phân nếu cần. Nếu không có câu hỏi, để trống ô.
+        -   Trong các ô có câu hỏi ở phần Body, bạn PHẢI điền số lượng câu hỏi, số thứ tự câu hỏi và tổng điểm. 
+            + **QUY TẮC ĐÁNH SỐ THỨ TỰ (BẮT BUỘC):** 
+              * **Nhiều lựa chọn:** Đánh số liên tục THEO TỪNG BÀI HỌC (từ trái qua phải: Biết -> Hiểu -> Vận dụng). Hết Bài 1 mới đánh số tiếp cho Bài 2. (VD: Bài 1 Biết C1,2, Hiểu C3. Bài 2 Biết C4,5...). Nếu ô có nhiều câu, chỉ ghi chữ 'C' ở đầu, sau đó phẩy số (VD: C1,2,3).
+              * **Đúng - Sai:** Mỗi câu ĐS đánh số từ 1, 2... Các ý bên trong đánh a, b, c, d. VD: Câu 1 có 4 ý là 1a, 1b, 1c, 1d. Cũng đánh số liên tục theo từng bài.
+              * **Trả lời ngắn:** Đánh số độc lập, bắt đầu lại từ đầu là C1, 2, 3... Đánh liên tục theo từng bài.
+              * **Tự luận:** Đánh số độc lập, bắt đầu lại từ đầu là C1, 2, 3... Đánh liên tục theo từng bài.
+            + **ĐỊNH DẠNG Ô CÂU HỎI (BẮT BUỘC):** \`Số lượng (Các số thứ tự câu) <br/> (Điểm)\`
+              * Ví dụ Nhiều lựa chọn: \`2 (C1,2) <br/> (0.5đ)\`
+              * Ví dụ Đúng - Sai: \`2 (1a,1b) <br/> (0.5đ)\`
+              * Ví dụ Tự luận: \`1 (C1) <br/> (2.0đ)\`
+            + RIÊNG Ở PHẦN FOOTER (Tổng): Vẫn giữ nguyên định dạng cũ là \`(Tổng số - Tổng điểm)\` (VD: \`(2 - 0.5)\` hoặc \`(2 ý - 1.0)\`).
+            + Nếu ô không có câu hỏi, để trống hoàn toàn.
 
     --- MẪU HTML MA TRẬN BẮT BUỘC ---
     \`\`\`html
@@ -382,21 +401,21 @@ export const generateMatrixAndSpec = async (
             <tr>
                 <td>1</td>
                 <td style="text-align: left;">Tên bài học 1.1...</td>
-                <!-- Dữ liệu (Số câu - Tổng điểm) cho từng ô -->
-                <td>(1 - 0.25)</td><td></td><td></td> <!-- NL -->
-                <td></td><td>(1 - 1.0)</td><td></td> <!-- ĐS -->
-                <td>(1 - 0.25)</td><td></td><td></td> <!-- Trả lời ngắn -->
-                <td></td><td></td><td>(1 - 2.0)</td> <!-- TL -->
+                <!-- Dữ liệu cho từng ô -->
+                <td>2 (C1,2)<br/>(0.5đ)</td><td></td><td></td> <!-- NL -->
+                <td></td><td>2 (1a,1b)<br/>(1.0đ)</td><td></td> <!-- ĐS -->
+                <td>1 (C1)<br/>(0.25đ)</td><td></td><td></td> <!-- Trả lời ngắn -->
+                <td></td><td></td><td>1 (C1)<br/>(2.0đ)</td> <!-- TL -->
                 <!-- Tổng theo mức độ cho hàng này -->
-                <td>(2 - 0.5)</td><td>(1 - 1.0)</td><td>(1 - 2.0)</td>
+                <td>(2 - 0.5)</td><td>(2 ý - 1.0)</td><td>(1 - 2.0)</td>
                 <td>35</td> <!-- Tỉ lệ % -->
             </tr>
         </tbody>
         <tfoot>
             <tr style="font-weight: bold;">
-                <td colspan="2">Tổng (Số câu - Điểm)</td>
+                <td colspan="2">Tổng (Số câu, ý - Điểm)</td>
                 <td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td>
-                <td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td>
+                <td>(Tổng ý - Điểm)</td><td>(Tổng ý - Điểm)</td><td>(Tổng ý - Điểm)</td>
                 <td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td>
                 <td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td>
                 <td>(Tổng Biết - Điểm)</td>
@@ -435,6 +454,10 @@ export const generateMatrixAndSpec = async (
                 "vanDung": {"TN": 0, "DS": 0, "TNgan": 0, "TL": 0},
                 "vanDungCao": {"TN": 0, "DS": 0, "TNgan": 0, "TL": 0}
               }
+              // LƯU Ý QUAN TRỌNG VỀ TRƯỜNG DS:
+              // DS = SỐ Ý (không phải số câu hỏi).
+              // Ví dụ: Bài có 1 câu Đúng-Sai (${soY} ý) -> nhanBiet.DS=${dsBiet}, thongHieu.DS=${dsHieu}, vanDung.DS=${dsVanDung}
+              // Các trường TN, TNgan, TL vẫn là số CÂU như bình thường.
             }
           ]
         }
@@ -684,6 +707,11 @@ const generateSingleExam = async (
         8.  **ĐỊNH DẠNG BẢNG ĐÁP ÁN:** Dùng bảng NGANG cho đáp án trắc nghiệm ở cuối đề.
         9.  **ĐỊNH DẠNG TABLE CHO ĐÁP ÁN:** BẮT BUỘC dùng HTML TABLE không viền (border="0") để trình bày 4 phương án A, B, C, D theo cấu trúc **2 dòng 2 cột** (A và B ở dòng trên, C và D ở dòng dưới). TUYỆT ĐỐI KHÔNG dàn hàng ngang 4 cột. Cấu trúc HTML BẮT BUỘC: \`<table style="width:100%; border:none; table-layout:fixed;"><tr><td style="border:none; width:50%;">A. ...</td><td style="border:none; width:50%;">B. ...</td></tr><tr><td style="border:none; width:50%;">C. ...</td><td style="border:none; width:50%;">D. ...</td></tr></table>\`. Phải chia đều 50% khoảng cách 2 cột.
         10. **KIỂM TRA TỶ LỆ:** Trước khi xuất kết quả, hãy tự đếm lại bảng đáp án. Nếu có quá nhiều đáp án giống nhau nằm liên tiếp hoặc một chữ cái xuất hiện quá nhiều, hãy hoán vị lại phương án của các câu hỏi đó.
+        11. **ĐÁNH SỐ THỨ TỰ CÂU HỎI (BẮT BUỘC):** Đánh số thứ tự các câu hỏi trong đề thi PHẢI KHỚP TUYỆT ĐỐI với số thứ tự được đánh trong MA TRẬN. Cụ thể:
+            - Trắc nghiệm Nhiều lựa chọn: Đánh số liên tục Câu 1, Câu 2, Câu 3... từ đầu đến cuối phần này.
+            - Trắc nghiệm Đúng - Sai: Đánh số liên tục Câu 1, Câu 2, Câu 3... cho các câu lớn (bên trong là các ý a, b, c, d). Đánh số độc lập bắt đầu từ 1 đối với phần này.
+            - Trắc nghiệm Trả lời ngắn: Đánh số ĐỘC LẬP, BẮT ĐẦU LẠI TỪ CÂU 1 (Câu 1, Câu 2, Câu 3...).
+            - Tự luận: Đánh số ĐỘC LẬP, BẮT ĐẦU LẠI TỪ CÂU 1 (Câu 1, Câu 2, Câu 3...).
 
         ${formatInstruction}
 
