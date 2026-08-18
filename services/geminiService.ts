@@ -332,9 +332,11 @@ export const generateMatrixAndSpec = async (
       `;
   }
 
-  const totalQuestionsString = config.isTuLuan100 ?
-    `(${config.soCauTuLuan} - 10.0)` :
-    `(${config.soCauNhieuLuaChon + config.soCauDungSai + config.soCauTraLoiNgan + config.soCauTuLuan} - 10.0)`;
+  const soCauTNKQ_va_TL = config.isTuLuan100 ?
+    `${config.soCauTuLuan} câu` :
+    `${config.soCauNhieuLuaChon + config.soCauTraLoiNgan + config.soCauTuLuan} câu, ${config.soCauDungSai * config.soYTrongCauDungSai} ý`;
+
+  const totalQuestionsString = `(${soCauTNKQ_va_TL} - 10.0)`;
 
 
   const prompt = `
@@ -384,8 +386,21 @@ export const generateMatrixAndSpec = async (
               * Ví dụ Nhiều lựa chọn: \`2 (C1,2) <br/> (0.5đ)\`
               * Ví dụ Đúng - Sai: \`2 (1a,1b) <br/> (0.5đ)\`
               * Ví dụ Tự luận: \`1 (C1) <br/> (2.0đ)\`
-            + RIÊNG Ở PHẦN FOOTER (Tổng): Vẫn giữ nguyên định dạng cũ là \`(Tổng số - Tổng điểm)\` (VD: \`(2 - 0.5)\` hoặc \`(2 ý - 1.0)\`).
             + Nếu ô không có câu hỏi, để trống hoàn toàn.
+
+    --- QUY TẮC ĐỊNH DẠNG 3 CỘT "TỔNG" (Biết, Hiểu, Vận dụng) Ở CẢ BODY VÀ FOOTER (CỰC KỲ QUAN TRỌNG) ---
+    - **TUYỆT ĐỐI CẤM:** Không được cộng gộp số câu với số ý thành một con số duy nhất (Ví dụ SAI: (5 - 1.25), (16 - 4.0), (7 - 3.0), (21 - 10.0)).
+    - **BẮT BUỘC PHẢI GHI CỤ THỂ, TÁCH BIỆT SỐ CÂU VÀ SỐ Ý:**
+      * Nếu trong mức độ đó CHỈ CÓ CÂU (TN, Trả lời ngắn, Tự luận): Ghi \`(X câu - Điểm)\` hoặc \`(X - Điểm)\` (Ví dụ: \`(3 câu - 0.75)\` hoặc \`(1 câu - 1.5)\`).
+      * Nếu trong mức độ đó CHỈ CÓ Ý (Đúng - Sai): Ghi \`(Y ý - Điểm)\` (Ví dụ: \`(2 ý - 0.5)\` hoặc \`(1 ý - 0.25)\`).
+      * **NẾU TRONG MỨC ĐỘ ĐÓ CÓ CẢ CÂU VÀ Ý: BẮT BUỘC GHI RÕ TÁCH BIỆT:** \`(X câu, Y ý - Điểm)\`
+        - Ví dụ ở hàng 1 mức Biết: có 3 câu TN và 2 ý ĐS -> Ghi: \`(3 câu, 2 ý - 1.25)\`.
+        - Ví dụ ở hàng 1 mức Hiểu: có 1 câu TN và 1 ý ĐS -> Ghi: \`(1 câu, 1 ý - 0.5)\`.
+        - Ví dụ ở hàng 1 mức Vận dụng: có 1 ý ĐS -> Ghi: \`(1 ý - 0.25)\`.
+        - Ví dụ ở Footer cột Tổng Biết: có 10 câu TN và 6 ý ĐS -> Ghi: \`(10 câu, 6 ý - 4.0)\`.
+        - Ví dụ ở Footer cột Tổng Hiểu: có 3 câu TN, 1 câu TL và 3 ý ĐS (tổng 4 câu, 3 ý) -> Ghi: \`(4 câu, 3 ý - 3.0)\`.
+        - Ví dụ ở Footer cột Tổng Vận dụng: có 3 câu TN, 1 câu TL và 3 ý ĐS (tổng 4 câu, 3 ý) -> Ghi: \`(4 câu, 3 ý - 3.0)\`.
+        - Ô Tổng cuối cùng (góc phải dưới cùng của Footer): Ghi \`(${soCauTNKQ_va_TL} - 10.0)\`.
 
     --- MẪU HTML MA TRẬN BẮT BUỘC ---
     \`\`\`html
@@ -433,25 +448,25 @@ export const generateMatrixAndSpec = async (
                 <td>1</td>
                 <td style="text-align: left;">Tên bài học 1.1...</td>
                 <!-- Dữ liệu cho từng ô -->
-                <td>2 (C1,2)<br/>(0.5đ)</td><td></td><td></td> <!-- NL -->
-                <td></td><td>2 (1a,1b)<br/>(1.0đ)</td><td></td> <!-- ĐS -->
-                <td>1 (C1)<br/>(0.25đ)</td><td></td><td></td> <!-- Trả lời ngắn -->
-                <td></td><td></td><td>1 (C1)<br/>(2.0đ)</td> <!-- TL -->
-                <!-- Tổng theo mức độ cho hàng này -->
-                <td>(2 - 0.5)</td><td>(2 ý - 1.0)</td><td>(1 - 2.0)</td>
-                <td>35</td> <!-- Tỉ lệ % -->
+                <td>3 (C1,2,3)<br/>(0.75đ)</td><td>1 (C4)<br/>(0.25đ)</td><td></td> <!-- NL -->
+                <td>2 (1a,1b)<br/>(0.5đ)</td><td>1 (1c)<br/>(0.25đ)</td><td>1 (1d)<br/>(0.25đ)</td> <!-- ĐS -->
+                <td></td><td></td><td></td> <!-- Trả lời ngắn -->
+                <td></td><td></td><td></td> <!-- TL -->
+                <!-- Tổng theo mức độ cho hàng này (GHI CỤ THỂ SỐ CÂU VÀ SỐ Ý, KHÔNG GỘP CHUNG) -->
+                <td>(3 câu, 2 ý - 1.25)</td><td>(1 câu, 1 ý - 0.5)</td><td>(1 ý - 0.25)</td>
+                <td>20</td> <!-- Tỉ lệ % -->
             </tr>
         </tbody>
         <tfoot>
             <tr style="font-weight: bold;">
                 <td colspan="2">Tổng (Số câu, ý - Điểm)</td>
-                <td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td>
-                <td>(Tổng ý - Điểm)</td><td>(Tổng ý - Điểm)</td><td>(Tổng ý - Điểm)</td>
-                <td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td>
-                <td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td>
-                <td>(Tổng Biết - Điểm)</td>
-                <td>(Tổng Hiểu - Điểm)</td>
-                <td>(Tổng Vận dụng - Điểm)</td>
+                <td>(10 - 2.5)</td><td>(3 - 0.75)</td><td>(3 - 0.75)</td>
+                <td>(6 ý - 1.5)</td><td>(3 ý - 0.75)</td><td>(3 ý - 0.75)</td>
+                <td>(0 - 0)</td><td>(0 - 0)</td><td>(0 - 0)</td>
+                <td>(0 - 0)</td><td>(1 - 1.5)</td><td>(1 - 1.5)</td>
+                <td>(10 câu, 6 ý - 4.0)</td>
+                <td>(4 câu, 3 ý - 3.0)</td>
+                <td>(4 câu, 3 ý - 3.0)</td>
                 <td>${totalQuestionsString}</td>
             </tr>
             <tr style="font-weight: bold;">
