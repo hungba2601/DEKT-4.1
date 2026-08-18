@@ -10,13 +10,15 @@ interface FileInputProps {
   onFileProcessed: (content: string) => void;
 }
 
+/**
+ * FileInput đơn giản theo đúng nguyên bản (Dùng cho Phân phối chương trình - PPCT)
+ */
 const FileInput: React.FC<FileInputProps> = ({ id, label, onFileProcessed }) => {
   const [status, setStatus] = React.useState<'idle' | 'parsing' | 'success' | 'error'>('idle');
   const [feedback, setFeedback] = React.useState<string>('');
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    // Đặt lại giá trị input để cho phép tải lại cùng một file
     event.target.value = ''; 
     if (file) {
       setStatus('parsing');
@@ -41,13 +43,13 @@ const FileInput: React.FC<FileInputProps> = ({ id, label, onFileProcessed }) => 
   };
   
   const getFeedbackClasses = () => {
-     switch (status) {
+    switch (status) {
       case 'parsing': return 'text-blue-600 dark:text-blue-400';
       case 'success': return 'text-green-600 dark:text-green-400';
       case 'error': return 'text-red-600 dark:text-red-400';
       default: return 'text-gray-500 dark:text-gray-400';
     }
-  }
+  };
 
   return (
     <div>
@@ -58,15 +60,273 @@ const FileInput: React.FC<FileInputProps> = ({ id, label, onFileProcessed }) => 
             <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           <div className="flex flex-col sm:flex-row items-center justify-center text-sm text-gray-600 dark:text-gray-400">
-            <label htmlFor={id} className="relative cursor-pointer bg-white dark:bg-gray-800 rounded-md font-medium text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500">
+            <label htmlFor={id} className="relative cursor-pointer bg-white dark:bg-gray-800 rounded-md font-medium text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500 px-2 py-1">
               <span>Tải file lên</span>
               <input id={id} name={id} type="file" className="sr-only" onChange={handleFileChange} accept=".txt,.md,.pdf,.docx,.doc" />
             </label>
             <p className="pl-0 sm:pl-1">hoặc kéo thả vào đây</p>
           </div>
           <p className="text-xs text-gray-500 dark:text-gray-400">Hỗ trợ: TXT, MD, PDF, DOCX, DOC</p>
-          {feedback && <p className="text-sm font-semibold mt-2 ${getFeedbackClasses()}">{feedback}</p>}
+          {feedback && <p className={`text-sm font-semibold mt-2 ${getFeedbackClasses()}`}>{feedback}</p>}
         </div>
+      </div>
+    </div>
+  );
+};
+
+interface SgkFileItem {
+  id: string;
+  name: string;
+  size: number;
+  content: string;
+}
+
+interface SgkMultiFileInputProps {
+  id: string;
+  label: string;
+  onFileProcessed: (content: string) => void;
+}
+
+/**
+ * Multi-file Input chuyên dụng cho Sách giáo khoa (Hỗ trợ nhiều file PDF, Word, Ảnh; giới hạn 50MB)
+ */
+const SgkMultiFileInput: React.FC<SgkMultiFileInputProps> = ({ id, label, onFileProcessed }) => {
+  const [fileList, setFileList] = React.useState<SgkFileItem[]>([]);
+  const [status, setStatus] = React.useState<'idle' | 'parsing' | 'success' | 'error'>('idle');
+  const [feedback, setFeedback] = React.useState<string>('');
+  const [isDragging, setIsDragging] = React.useState<boolean>(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const updateCombined = (items: SgkFileItem[]) => {
+    if (items.length === 0) {
+      onFileProcessed("");
+      setStatus('idle');
+      setFeedback('');
+      return;
+    }
+    const combined = items.map((item, idx) => 
+      items.length > 1 
+        ? `\n\n=== TÀI LIỆU (${idx + 1}/${items.length}): ${item.name} ===\n\n${item.content}\n\n=== HẾT TÀI LIỆU: ${item.name} ===`
+        : item.content
+    ).join('\n\n');
+
+    onFileProcessed(combined);
+    const totalBytes = items.reduce((sum, f) => sum + f.size, 0);
+    const totalMB = (totalBytes / (1024 * 1024)).toFixed(2);
+    setFeedback(`Đã tải ${items.length} file (Tổng: ${totalMB} MB)`);
+    setStatus('success');
+  };
+
+  const handleFiles = async (files: FileList | File[]) => {
+    const rawFiles = Array.from(files);
+    if (rawFiles.length === 0) return;
+
+    const currentBytes = fileList.reduce((sum, f) => sum + f.size, 0);
+    const newBytes = rawFiles.reduce((sum, f) => sum + f.size, 0);
+    const totalMB = (currentBytes + newBytes) / (1024 * 1024);
+
+    if (totalMB > 50) {
+      setStatus('error');
+      setFeedback(`Tổng dung lượng (${totalMB.toFixed(1)}MB) vượt quá 50MB.`);
+      alert(`Tổng dung lượng các file (${totalMB.toFixed(1)}MB) vượt quá 50MB. Vui lòng giảm bớt file hoặc nén dung lượng.`);
+      return;
+    }
+
+    setStatus('parsing');
+    const newItems: SgkFileItem[] = [];
+
+    try {
+      for (let i = 0; i < rawFiles.length; i++) {
+        const file = rawFiles[i];
+        setFeedback(`Đang đọc file (${i + 1}/${rawFiles.length}): ${file.name}...`);
+        const text = await readFileContent(file);
+        newItems.push({
+          id: `${file.name}-${Date.now()}-${Math.random()}`,
+          name: file.name,
+          size: file.size,
+          content: text
+        });
+      }
+
+      const updated = [...fileList, ...newItems];
+      setFileList(updated);
+      updateCombined(updated);
+    } catch (err: any) {
+      console.error("Lỗi khi đọc file:", err);
+      setStatus('error');
+      setFeedback(err.message || "Lỗi khi đọc file.");
+      alert(`Lỗi khi đọc file: ${err.message || 'Không thể đọc nội dung file.'}`);
+    }
+  };
+
+  const handleRemove = (idToRemove: string) => {
+    const updated = fileList.filter(f => f.id !== idToRemove);
+    setFileList(updated);
+    updateCombined(updated);
+  };
+
+  const handleClearAll = () => {
+    setFileList([]);
+    updateCombined([]);
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      await handleFiles(e.dataTransfer.files);
+    }
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  const getFileBadge = (name: string) => {
+    const ext = name.split('.').pop()?.toLowerCase();
+    if (ext === 'pdf') return <span className="bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 font-bold px-1.5 py-0.5 rounded text-[10px]">PDF</span>;
+    if (['doc', 'docx'].includes(ext || '')) return <span className="bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 font-bold px-1.5 py-0.5 rounded text-[10px]">WORD</span>;
+    if (['png', 'jpg', 'jpeg', 'webp', 'bmp'].includes(ext || '')) return <span className="bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 font-bold px-1.5 py-0.5 rounded text-[10px]">ẢNH</span>;
+    return <span className="bg-gray-100 text-gray-700 font-bold px-1.5 py-0.5 rounded text-[10px]">FILE</span>;
+  };
+
+  const totalBytes = fileList.reduce((sum, f) => sum + f.size, 0);
+
+  return (
+    <div>
+      <input 
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept=".txt,.md,.pdf,.docx,.doc,.png,.jpg,.jpeg,.webp"
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            handleFiles(e.target.files);
+          }
+          e.target.value = '';
+        }}
+      />
+      <label className="block text-base font-bold text-blue-600 dark:text-blue-400 mb-1">
+        {label}
+      </label>
+
+      <div 
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className={`mt-1 p-4 border-2 border-dashed rounded-md transition-colors ${
+          isDragging 
+            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' 
+            : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800'
+        }`}
+      >
+        {fileList.length === 0 ? (
+          <div className="space-y-2 text-center py-3">
+            <svg className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+              <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+              <button 
+                type="button" 
+                onClick={() => fileInputRef.current?.click()}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-medium px-4 py-1.5 rounded-md shadow-sm transition"
+              >
+                Tải các file lên (PDF, Word, Ảnh...)
+              </button>
+              <span>hoặc kéo thả vào đây</span>
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400">Hỗ trợ: PDF (từng bài), Word, Ảnh (.png, .jpg), TXT</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-gray-200 dark:border-gray-700">
+              <div className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                📁 Đã nạp <span className="text-blue-600 font-bold">{fileList.length}</span> file 
+                (Tổng: <span className="text-emerald-600 font-bold">{formatFileSize(totalBytes)}</span> / 50MB)
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  type="button" 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-medium px-2.5 py-1 rounded shadow-sm transition"
+                >
+                  ➕ Thêm file khác
+                </button>
+                <button 
+                  type="button" 
+                  onClick={handleClearAll}
+                  className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 px-2 py-1 rounded transition border border-red-200 dark:border-red-800"
+                >
+                  🗑️ Xóa tất cả
+                </button>
+              </div>
+            </div>
+
+            <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+              {fileList.map((file, idx) => (
+                <div 
+                  key={file.id} 
+                  className="flex items-center justify-between bg-gray-50 dark:bg-gray-700/60 border border-gray-200 dark:border-gray-600 px-2.5 py-1.5 rounded text-xs"
+                >
+                  <div className="flex items-center gap-2 min-w-0 pr-2">
+                    {getFileBadge(file.name)}
+                    <span className="truncate font-medium text-gray-800 dark:text-gray-200" title={file.name}>
+                      {idx + 1}. {file.name}
+                    </span>
+                    <span className="text-gray-500 dark:text-gray-400 shrink-0 text-[11px]">
+                      ({formatFileSize(file.size)})
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRemove(file.id)}
+                    title="Xóa file này"
+                    className="text-red-500 hover:text-red-700 hover:bg-red-100 dark:hover:bg-red-900/40 w-5 h-5 flex items-center justify-center rounded-full shrink-0 font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {status === 'parsing' && (
+          <div className="flex items-center justify-center gap-2 mt-2 py-1.5 px-3 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs rounded border border-blue-200 dark:border-blue-800 animate-pulse">
+            <svg className="animate-spin h-3.5 w-3.5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+            </svg>
+            <span className="font-semibold">{feedback || 'Đang đọc nội dung file...'}</span>
+          </div>
+        )}
+
+        {status === 'error' && (
+          <div className="mt-2 py-1.5 px-3 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs rounded border border-red-200 dark:border-red-800">
+            ⚠️ <strong>Lỗi:</strong> {feedback}
+          </div>
+        )}
+
+        {status === 'success' && fileList.length > 0 && (
+          <div className="mt-2 text-xs text-green-600 dark:text-green-400 font-semibold text-center">
+            ✓ {feedback}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -475,15 +735,26 @@ const Tab1: React.FC<Tab1Props> = ({
                 <h3 className="text-xl font-bold text-gray-800 dark:text-gray-100">1. Tải lên tài liệu & Nhập thông tin</h3>
                 <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
-                        <FileInput id="sgk-file" label="File nội dung sách giáo khoa" onFileProcessed={setSgkFileContent} />
-                        <p className="text-red-600 dark:text-red-500 font-bold text-sm mt-2">
-                            Tải file SGK Khối lớp, môn của mình dạng pdf
+                        <SgkMultiFileInput 
+                            id="sgk-file" 
+                            label="File nội dung sách giáo khoa (hoặc ảnh chụp các bài)" 
+                            onFileProcessed={setSgkFileContent}
+                        />
+                        <p className="text-red-600 dark:text-red-500 font-extrabold text-sm mt-2">
+                            Cho phép up nhiều file, nhưng tổng dung lượng không được vượt quá 50MB
+                        </p>
+                        <p className="text-gray-600 dark:text-gray-400 text-xs mt-1">
+                            💡 <em>Thầy cô có thể chụp ảnh hoặc tải riêng lẻ các bài cần kiểm tra (PDF, Word, Ảnh JPG/PNG) để AI xử lý nhanh, không lo tốn dung lượng và không phải tải nguyên cuốn SGK.</em>
                         </p>
                     </div>
                     <div>
-                        <FileInput id="curriculum-file" label="File phân phối chương trình môn học" onFileProcessed={setCurriculumFileContent} />
+                        <FileInput 
+                            id="curriculum-file" 
+                            label="File phân phối chương trình môn học" 
+                            onFileProcessed={setCurriculumFileContent}
+                        />
                         <p className="text-red-600 dark:text-red-500 font-bold text-sm mt-2">
-                            Tải file PPCT LÊN file này là Phụ lục 1 có tên nội dung bài học , yêu cầu cần đạt. Thầy cô copy phần nội dung từ tuần nào đến tuần nào cho HS kiểm tra từ file PPCT cả năm , tạo thành file mới với tên tùy ý rồi up lên. KHÔNG lấy nguyên file PPCT cả năm up lên AI sẽ tạo ra ma trận cả năm không đúng vói yêu cầu minh
+                            Tải file PPCT LÊN: File này là Phụ lục 1 có tên nội dung bài học, yêu cầu cần đạt. Thầy cô copy phần nội dung từ tuần nào đến tuần nào cho HS kiểm tra từ file PPCT cả năm, tạo thành file mới với tên tùy ý rồi up lên. KHÔNG lấy nguyên file PPCT cả năm up lên AI sẽ tạo ra ma trận cả năm không đúng với yêu cầu mình.
                         </p>
                     </div>
                 </div>
