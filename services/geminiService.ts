@@ -223,6 +223,37 @@ const callWithRetry = async <T>(
 };
 // ------------------------------
 
+/**
+ * Nhận diện và trích xuất chữ từ file ảnh (OCR) sử dụng Gemini Multimodal
+ */
+export const ocrImage = async (base64Data: string, mimeType: string, fileName?: string): Promise<string> => {
+  const model = currentAiModel;
+  const prompt = `Bạn là chuyên gia số hóa tài liệu giáo dục. Hãy đọc và trích xuất TOÀN BỘ nội dung văn bản, bảng biểu, đề mục và nội dung bài học trong hình ảnh trang sách giáo khoa này một cách chi tiết, chính xác 100%.
+- Giữ nguyên cấu trúc các mục, tiêu đề, đoạn văn.
+- Đối với công thức toán/lý/hóa, sử dụng cú pháp LaTeX ($...$ cho nội dòng, $$...$$ cho công thức khối).
+- Tuyệt đối không thêm lời bình luận, lời chào hay giải thích nào khác. Chỉ trả về nội dung đã trích xuất.`;
+
+  const response = await callWithRetry<GenerateContentResponse>(() => 
+    getAiClient().models.generateContent({
+      model,
+      contents: [
+        {
+          inlineData: {
+            mimeType: mimeType || 'image/jpeg',
+            data: base64Data,
+          },
+        },
+        {
+          text: prompt,
+        },
+      ],
+    })
+  );
+
+  const text = response.text || "";
+  return text.trim();
+};
+
 export const generateMatrixAndSpec = async (
   sgkFileContent: string,
   curriculumFileContent: string,
