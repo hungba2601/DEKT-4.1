@@ -258,12 +258,14 @@ export const generateMatrixAndSpec = async (
   sgkFileContent: string,
   curriculumFileContent: string,
   config: MatrixConfig,
-  examTitle: string
+  examTitle: string,
+  schoolYear?: string
 ): Promise<{ matrix: string; spec: SpecData }> => {
   const model = currentAiModel;
   const sgkText = fileToText(sgkFileContent, "Sách giáo khoa (Toàn bộ nội dung)");
   const curriculumText = fileToText(curriculumFileContent, "Phân phối chương trình");
-  const finalExamTitle = examTitle ? ` ${examTitle.toUpperCase()}` : '';
+  const titleParts = [examTitle ? examTitle.toUpperCase() : '', schoolYear ? `NĂM HỌC ${schoolYear}` : ''].filter(Boolean);
+  const finalExamTitle = titleParts.length > 0 ? ` ${titleParts.join(' - ')}` : '';
 
   let configRules = '';
 
@@ -696,7 +698,9 @@ const generateSingleExam = async (
   sgkText: string,
   similarityPercentage: number,
   examTemplateContent?: string,
-  soYTrongCauDungSai: number = 4
+  soYTrongCauDungSai: number = 4,
+  examTitle?: string,
+  schoolYear?: string
 ): Promise<string> => {
   const model = currentAiModel;
 
@@ -708,12 +712,17 @@ const generateSingleExam = async (
     `;
 
   let formatInstruction = '';
+  const titleHeader = [
+    examTitle ? `ĐỀ KIỂM TRA ${examTitle.toUpperCase()}` : 'ĐỀ KIỂM TRA',
+    schoolYear ? `NĂM HỌC ${schoolYear}` : ''
+  ].filter(Boolean).join(' - ');
+
   if (examTemplateContent) {
     formatInstruction = `
             --- QUY TẮC ĐỊNH DẠNG (CỰC KỲ QUAN TRỌNG) ---
             1.  **SỬ DỤNG MẪU HTML:** Bạn PHẢI sử dụng đoạn mã HTML trong "FILE MẪU (HTML)" dưới đây làm khuôn mẫu TUYỆT ĐỐI cho đề thi này.
             2.  **BẢO TOÀN CẤU TRÚC:** Đầu ra của bạn phải là một chuỗi HTML hoàn chỉnh. TUYỆT ĐỐI không được thay đổi cấu trúc, các thẻ HTML (<table>, <div>, <p>, <span>), các class, hoặc style inline của file mẫu. Hãy giữ nguyên định dạng y hệt.
-            3.  **THAY THẾ NỘI DUNG:** Tìm các vị trí giữ chỗ (placeholders) trong file mẫu và thay thế chúng bằng câu hỏi và đáp án tương ứng.
+            3.  **THAY THẾ NỘI DUNG:** Tìm các vị trí giữ chỗ (placeholders) trong file mẫu và thay thế chúng bằng câu hỏi và đáp án tương ứng. Cập nhật đúng Tiêu đề kỳ kiểm tra (${examTitle || ''}), Năm học (${schoolYear || ''}) và Đề số (${index}) vào phần thông tin đầu trang.
             
             --- FILE MẪU (HTML) ---
             ${examTemplateContent}
@@ -722,7 +731,7 @@ const generateSingleExam = async (
     formatInstruction = `
             --- QUY TẮC ĐỊNH DẠNG ---
             Định dạng đầu ra phải là HTML.
-            -   Đề thi phải có tiêu đề rõ ràng (ví dụ: "ĐỀ SỐ ${index}").
+            -   Đề thi phải có tiêu đề rõ ràng ở đầu trang (ví dụ: "${titleHeader} - ĐỀ SỐ ${index}").
             -   Chia rõ các phần chi tiết (nếu có trong ma trận), BẮT BUỘC ghi rõ tiêu đề mỗi phần kèm theo "(Số câu hỏi - Tổng điểm)". Ví dụ cấu trúc chuẩn:
                 + "PHẦN I: TRẮC NGHIỆM NHIỀU PHƯƠNG ÁN LỰA CHỌN (... câu - ... điểm)"
                 + "PHẦN II: TRẮC NGHIỆM ĐÚNG SAI (... câu - ... điểm)"
@@ -798,7 +807,9 @@ export const generateExams = async (
   examTemplateContent?: string,
   startIndex: number = 1,
   count: number = 3,
-  soYTrongCauDungSai: number = 4
+  soYTrongCauDungSai: number = 4,
+  examTitle?: string,
+  schoolYear?: string
 ): Promise<string[]> => {
   const reviewText = fileToText(reviewFileContent, "Ngân hàng câu hỏi ôn tập");
   const matrixText = `--- BẮT ĐẦU MA TRẬN ---\n${matrix}\n--- KẾT THÚC MA TRẬN ---`;
@@ -811,7 +822,7 @@ export const generateExams = async (
   try {
     for (const i of indices) {
       console.log(`Đang tạo đề thi số ${i}...`);
-      const exam = await generateSingleExam(i, reviewText, matrixText, "", similarityPercentage, examTemplateContent, soYTrongCauDungSai);
+      const exam = await generateSingleExam(i, reviewText, matrixText, "", similarityPercentage, examTemplateContent, soYTrongCauDungSai, examTitle, schoolYear);
       exams.push(exam);
       console.log(`Đã hoàn thành đề thi số ${i}.`);
       // Delay 2 giây giữa các lần gọi để tránh rate limit (429)
