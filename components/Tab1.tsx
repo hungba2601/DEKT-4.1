@@ -336,6 +336,8 @@ const SgkMultiFileInput: React.FC<SgkMultiFileInputProps> = ({ id, label, onFile
 interface Tab1Props {
   examTitle: string;
   setExamTitle: (title: string) => void;
+  schoolYear: string;
+  setSchoolYear: (year: string) => void;
   matrixConfig: MatrixConfig;
   setMatrixConfig: React.Dispatch<React.SetStateAction<MatrixConfig>>;
   setIsLoading: (isLoading: boolean) => void;
@@ -430,6 +432,8 @@ const PointInput: React.FC<{
 const Tab1: React.FC<Tab1Props> = ({ 
     examTitle,
     setExamTitle,
+    schoolYear,
+    setSchoolYear,
     setMatrixConfig, 
     matrixConfig, 
     setIsLoading,
@@ -703,7 +707,7 @@ const Tab1: React.FC<Tab1Props> = ({
                 // additionalPrompt is already in matrixConfig
             };
 
-            const { matrix, spec } = await generateMatrixAndSpec(sgkFileContent, curriculumFileContent, finalConfig, examTitle);
+            const { matrix, spec } = await generateMatrixAndSpec(sgkFileContent, curriculumFileContent, finalConfig, examTitle, schoolYear);
             
             clearInterval(progressInterval);
             setLoadingProgress(100);
@@ -758,18 +762,33 @@ const Tab1: React.FC<Tab1Props> = ({
                         </p>
                     </div>
                 </div>
-                <div className="mt-6">
-                    <label htmlFor="exam-title" className="block text-lg font-bold text-blue-600 dark:text-blue-400 mb-2">
-                        Nhập Tiêu đề kỳ kiểm tra
-                    </label>
-                    <input
-                        type="text"
-                        id="exam-title"
-                        value={examTitle}
-                        onChange={(e) => setExamTitle(e.target.value)}
-                        className="mt-1 block w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-lg bg-white dark:bg-gray-700"
-                        placeholder="VD: Giữa Học Kỳ I - Môn Tin học 6"
-                    />
+                <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label htmlFor="exam-title" className="block text-lg font-bold text-blue-600 dark:text-blue-400 mb-2">
+                            Nhập Tiêu đề kỳ kiểm tra
+                        </label>
+                        <input
+                            type="text"
+                            id="exam-title"
+                            value={examTitle}
+                            onChange={(e) => setExamTitle(e.target.value)}
+                            className="mt-1 block w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-lg bg-white dark:bg-gray-700"
+                            placeholder="VD: Giữa Học Kỳ I - Môn Tin học 6"
+                        />
+                    </div>
+                    <div>
+                        <label htmlFor="school-year" className="block text-lg font-bold text-blue-600 dark:text-blue-400 mb-2">
+                            Nhập Năm học
+                        </label>
+                        <input
+                            type="text"
+                            id="school-year"
+                            value={schoolYear}
+                            onChange={(e) => setSchoolYear(e.target.value)}
+                            className="mt-1 block w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-lg bg-white dark:bg-gray-700"
+                            placeholder="VD: 2024 - 2025"
+                        />
+                    </div>
                 </div>
             </div>
 
