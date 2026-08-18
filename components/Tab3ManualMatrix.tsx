@@ -298,13 +298,36 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
                 if (hasDsY) dsQuestionCounter++;
                 const currentDsQNum = dsQuestionCounter;
 
-                // Format DS ý with points
                 const fmtDsY = (yCount: number, startIdx: number) => {
                     if (!yCount) return "";
                     const yLabel = formatDsY(currentDsQNum, yCount, startIdx);
                     const p = yCount * config.diemMoiYTrongCauDungSai;
                     return `${yLabel}<br/>(${parseFloat(p.toFixed(2))}đ)`;
                 };
+
+                const formatTotalCell = (cauCount: number, yCount: number, points: number) => {
+                    if (cauCount === 0 && yCount === 0) return '';
+                    const ptsStr = parseFloat(points.toFixed(2));
+                    if (cauCount > 0 && yCount > 0) {
+                        return `(${cauCount} câu, ${yCount} ý - ${ptsStr})`;
+                    }
+                    if (cauCount > 0) {
+                        return `(${cauCount} câu - ${ptsStr})`;
+                    }
+                    return `(${yCount} ý - ${ptsStr})`;
+                };
+
+                const nb_cau = (s.nhanBiet.TN || 0) + (s.nhanBiet.TNgan || 0) + (s.nhanBiet.TL || 0);
+                const nb_y = (s.nhanBiet.DS || 0);
+                const nb_points = (s.nhanBiet.TN || 0) * config.diemCauNhieuLuaChon + (s.nhanBiet.TNgan || 0) * config.diemCauTraLoiNgan + (s.nhanBiet.TL || 0) * config.diemCauTuLuan + nb_y * config.diemMoiYTrongCauDungSai;
+
+                const th_cau = (s.thongHieu.TN || 0) + (s.thongHieu.TNgan || 0) + (s.thongHieu.TL || 0);
+                const th_y = (s.thongHieu.DS || 0);
+                const th_points = (s.thongHieu.TN || 0) * config.diemCauNhieuLuaChon + (s.thongHieu.TNgan || 0) * config.diemCauTraLoiNgan + (s.thongHieu.TL || 0) * config.diemCauTuLuan + th_y * config.diemMoiYTrongCauDungSai;
+
+                const vd_cau = (s.vanDung.TN || 0) + (s.vanDung.TNgan || 0) + (s.vanDung.TL || 0);
+                const vd_y = (s.vanDung.DS || 0);
+                const vd_points = (s.vanDung.TN || 0) * config.diemCauNhieuLuaChon + (s.vanDung.TNgan || 0) * config.diemCauTraLoiNgan + (s.vanDung.TL || 0) * config.diemCauTuLuan + vd_y * config.diemMoiYTrongCauDungSai;
 
                 html += `<tr>
                     <td>${row.tt}</td>
@@ -329,40 +352,66 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
                     <td>${fmt(s.vanDung.TL, config.diemCauTuLuan, tlQuestionCounter += (s.thongHieu.TL || 0))}</td>
                     ${(() => { tlQuestionCounter += (s.vanDung.TL || 0); return ''; })()}
                     
-                    <td></td><td></td><td></td> 
+                    <td>${formatTotalCell(nb_cau, nb_y, nb_points)}</td>
+                    <td>${formatTotalCell(th_cau, th_y, th_points)}</td>
+                    <td>${formatTotalCell(vd_cau, vd_y, vd_points)}</td> 
                     <td>${rowTotalPoints > 0 ? ((rowTotalPoints/10)*100).toFixed(0) : 0}</td>
                 </tr>`;
             });
         });
 
+        const footer_nb_cau = sumTN.nb + sumTNgan.nb + sumTL.nb;
+        const footer_nb_y = sumDS.nb;
+        const footer_nb_points = sumTN.nb * config.diemCauNhieuLuaChon + sumTNgan.nb * config.diemCauTraLoiNgan + sumTL.nb * config.diemCauTuLuan + sumDS.nb * config.diemMoiYTrongCauDungSai;
+
+        const footer_th_cau = sumTN.th + sumTNgan.th + sumTL.th;
+        const footer_th_y = sumDS.th;
+        const footer_th_points = sumTN.th * config.diemCauNhieuLuaChon + sumTNgan.th * config.diemCauTraLoiNgan + sumTL.th * config.diemCauTuLuan + sumDS.th * config.diemMoiYTrongCauDungSai;
+
+        const footer_vd_cau = sumTN.vd + sumTNgan.vd + sumTL.vd;
+        const footer_vd_y = sumDS.vd;
+        const footer_vd_points = sumTN.vd * config.diemCauNhieuLuaChon + sumTNgan.vd * config.diemCauTraLoiNgan + sumTL.vd * config.diemCauTuLuan + sumDS.vd * config.diemMoiYTrongCauDungSai;
+
+        const formatFooterTotal = (cauCount: number, yCount: number, points: number) => {
+            const ptsStr = parseFloat(points.toFixed(2));
+            if (cauCount > 0 && yCount > 0) return `(${cauCount} câu, ${yCount} ý - ${ptsStr})`;
+            if (cauCount > 0) return `(${cauCount} câu - ${ptsStr})`;
+            if (yCount > 0) return `(${yCount} ý - ${ptsStr})`;
+            return `(0 - 0)`;
+        };
+
+        const totalCauCount = totalTNCount + totalTNganCount + totalTLCount;
+        const grandTotalString = totalDSCount > 0 ? `(${totalCauCount} câu, ${totalDSCount} ý - 10.0)` : `(${totalCauCount} câu - 10.0)`;
+
         // Add Footer
         html += `</tbody>
         <tfoot>
             <tr style="font-weight: bold;">
-                <td colspan="2">Tổng số câu, ý</td>
-                <td>${sumTN.nb || ''}</td><td>${sumTN.th || ''}</td><td>${sumTN.vd || ''}</td>
-                <td>${sumDS.nb > 0 ? `${sumDS.nb} ý` : ''}</td><td>${sumDS.th > 0 ? `${sumDS.th} ý` : ''}</td><td>${sumDS.vd > 0 ? `${sumDS.vd} ý` : ''}</td>
-                <td>${sumTNgan.nb || ''}</td><td>${sumTNgan.th || ''}</td><td>${sumTNgan.vd || ''}</td>
-                <td>${sumTL.nb || ''}</td><td>${sumTL.th || ''}</td><td>${sumTL.vd || ''}</td>
-                <td></td><td></td><td></td>
-                <td>${totalTNCount + totalDSCount + totalTNganCount + totalTLCount}</td>
+                <td colspan="2">Tổng (Số câu, ý - Điểm)</td>
+                <td>(${sumTN.nb || 0} - ${(sumTN.nb * config.diemCauNhieuLuaChon).toFixed(2)})</td>
+                <td>(${sumTN.th || 0} - ${(sumTN.th * config.diemCauNhieuLuaChon).toFixed(2)})</td>
+                <td>(${sumTN.vd || 0} - ${(sumTN.vd * config.diemCauNhieuLuaChon).toFixed(2)})</td>
+                <td>(${sumDS.nb > 0 ? `${sumDS.nb} ý` : '0'} - ${(sumDS.nb * config.diemMoiYTrongCauDungSai).toFixed(2)})</td>
+                <td>(${sumDS.th > 0 ? `${sumDS.th} ý` : '0'} - ${(sumDS.th * config.diemMoiYTrongCauDungSai).toFixed(2)})</td>
+                <td>(${sumDS.vd > 0 ? `${sumDS.vd} ý` : '0'} - ${(sumDS.vd * config.diemMoiYTrongCauDungSai).toFixed(2)})</td>
+                <td>(${sumTNgan.nb || 0} - ${(sumTNgan.nb * config.diemCauTraLoiNgan).toFixed(2)})</td>
+                <td>(${sumTNgan.th || 0} - ${(sumTNgan.th * config.diemCauTraLoiNgan).toFixed(2)})</td>
+                <td>(${sumTNgan.vd || 0} - ${(sumTNgan.vd * config.diemCauTraLoiNgan).toFixed(2)})</td>
+                <td>(${sumTL.nb || 0} - ${(sumTL.nb * config.diemCauTuLuan).toFixed(2)})</td>
+                <td>(${sumTL.th || 0} - ${(sumTL.th * config.diemCauTuLuan).toFixed(2)})</td>
+                <td>(${sumTL.vd || 0} - ${(sumTL.vd * config.diemCauTuLuan).toFixed(2)})</td>
+                <td>${formatFooterTotal(footer_nb_cau, footer_nb_y, footer_nb_points)}</td>
+                <td>${formatFooterTotal(footer_th_cau, footer_th_y, footer_th_points)}</td>
+                <td>${formatFooterTotal(footer_vd_cau, footer_vd_y, footer_vd_points)}</td>
+                <td>${grandTotalString}</td>
             </tr>
             <tr style="font-weight: bold;">
-                <td colspan="2">Tổng điểm</td>
-                <td colspan="3">${pointsTN.toFixed(2)}</td>
-                <td colspan="3">${pointsDS.toFixed(2)}</td>
-                <td colspan="3">${pointsTNgan.toFixed(2)}</td>
-                <td colspan="3">${pointsTL.toFixed(2)}</td>
-                <td colspan="3"></td>
-                <td>${finalTotalPoints.toFixed(2)}</td>
-            </tr>
-             <tr style="font-weight: bold;">
                 <td colspan="2">Tỉ lệ %</td>
-                <td colspan="3">${percentTN.toFixed(0)}%</td>
-                <td colspan="3">${percentDS.toFixed(0)}%</td>
-                <td colspan="3">${percentTNgan.toFixed(0)}%</td>
-                <td colspan="3">${percentTL.toFixed(0)}%</td>
-                <td colspan="3"></td>
+                <td colspan="9">${config.tracNghiem}% (TNKQ)</td>
+                <td colspan="3">${config.tuLuan}% (Tự luận)</td>
+                <td>${config.biet}%</td>
+                <td>${config.hieu}%</td>
+                <td>${config.vanDung}%</td>
                 <td>100%</td>
             </tr>
         </tfoot>
