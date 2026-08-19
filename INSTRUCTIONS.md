@@ -1,4 +1,4 @@
-# HƯỚNG DẪN SỬ DỤNG APP TẠO ĐỀ KIỂM TRA + MA TRẬN ĐẶC TẢ CV 7991 (AI) VER 3.1
+# HƯỚNG DẪN SỬ DỤNG APP TẠO ĐỀ KIỂM TRA + MA TRẬN ĐẶC TẢ CV 7991 (AI) VER 4.1
 
 Chào mừng quý thầy cô đến với ứng dụng AI hỗ trợ tạo ma trận và đề kiểm tra. Tài liệu này sẽ hướng dẫn chi tiết cách sử dụng các tính năng của ứng dụng để tối ưu hóa công việc soạn thảo giáo án.
 
