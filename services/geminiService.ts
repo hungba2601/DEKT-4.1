@@ -3,9 +3,9 @@ import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import type { MatrixConfig, SpecData } from '../types';
 
 let userApiKey: string | null = null;
-let currentAiModel: string = 'gemini-2.5-flash';
+let currentAiModel: string = 'gemini-3.6-flash';
 
-export const setGeminiConfig = (key: string, model: string = 'gemini-2.5-flash') => {
+export const setGeminiConfig = (key: string, model: string = 'gemini-3.6-flash') => {
   userApiKey = key;
   currentAiModel = model;
 };
