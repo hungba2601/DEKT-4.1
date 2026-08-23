@@ -85,7 +85,7 @@ const App: React.FC = () => {
 
   // API Key State
   const [apiKey, setApiKey] = useState<string>('');
-  const [aiModel, setAiModel] = useState<string>('gemini-2.5-flash');
+  const [aiModel, setAiModel] = useState<string>('gemini-3.6-flash');
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState<boolean>(false);
   const [isQuotaExceeded, setIsQuotaExceeded] = useState<boolean>(false);
   const quotaExceededResolvers = useRef<((key: string) => void)[]>([]);
@@ -93,7 +93,7 @@ const App: React.FC = () => {
   // Load saved API Key and register Quota Exceeded handler
   useEffect(() => {
     const savedKey = localStorage.getItem('gemini_api_key');
-    const savedModel = localStorage.getItem('ai_model') || 'gemini-2.5-flash';
+    const savedModel = localStorage.getItem('ai_model') || 'gemini-3.6-flash';
     if (savedKey) {
       setApiKey(savedKey);
       setAiModel(savedModel);
