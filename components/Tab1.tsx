@@ -1,19 +1,21 @@
 
-import React, { useMemo, useEffect } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import type { MatrixConfig, SpecData, TabName } from '../types';
 import { generateMatrixAndSpec } from '../services/geminiService';
 import { readFileContent } from '../utils/fileReader';
+import { PpctSampleModal } from './PpctSampleModal';
 
 interface FileInputProps {
   id: string;
   label: string;
   onFileProcessed: (content: string) => void;
+  actionButton?: React.ReactNode;
 }
 
 /**
  * FileInput đơn giản theo đúng nguyên bản (Dùng cho Phân phối chương trình - PPCT)
  */
-const FileInput: React.FC<FileInputProps> = ({ id, label, onFileProcessed }) => {
+const FileInput: React.FC<FileInputProps> = ({ id, label, onFileProcessed, actionButton }) => {
   const [status, setStatus] = React.useState<'idle' | 'parsing' | 'success' | 'error'>('idle');
   const [feedback, setFeedback] = React.useState<string>('');
 
@@ -53,7 +55,10 @@ const FileInput: React.FC<FileInputProps> = ({ id, label, onFileProcessed }) => 
 
   return (
     <div>
-      <label htmlFor={id} className="block text-base font-bold text-blue-600 dark:text-blue-400 mb-1">{label}</label>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5 min-h-[32px]">
+        <label htmlFor={id} className="block text-base font-bold text-blue-600 dark:text-blue-400">{label}</label>
+        {actionButton}
+      </div>
       <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 dark:border-gray-600 border-dashed rounded-md">
         <div className="space-y-1 text-center">
           <svg className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
@@ -85,12 +90,13 @@ interface SgkMultiFileInputProps {
   id: string;
   label: string;
   onFileProcessed: (content: string) => void;
+  actionButton?: React.ReactNode;
 }
 
 /**
  * Multi-file Input chuyên dụng cho Sách giáo khoa (Hỗ trợ nhiều file PDF, Word, Ảnh; giới hạn 50MB)
  */
-const SgkMultiFileInput: React.FC<SgkMultiFileInputProps> = ({ id, label, onFileProcessed }) => {
+const SgkMultiFileInput: React.FC<SgkMultiFileInputProps> = ({ id, label, onFileProcessed, actionButton }) => {
   const [fileList, setFileList] = React.useState<SgkFileItem[]>([]);
   const [status, setStatus] = React.useState<'idle' | 'parsing' | 'success' | 'error'>('idle');
   const [feedback, setFeedback] = React.useState<string>('');
@@ -221,9 +227,12 @@ const SgkMultiFileInput: React.FC<SgkMultiFileInputProps> = ({ id, label, onFile
           e.target.value = '';
         }}
       />
-      <label className="block text-base font-bold text-blue-600 dark:text-blue-400 mb-1">
-        {label}
-      </label>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5 min-h-[32px]">
+        <label className="block text-base font-bold text-blue-600 dark:text-blue-400">
+          {label}
+        </label>
+        {actionButton}
+      </div>
 
       <div 
         onDragOver={handleDragOver}
@@ -446,6 +455,7 @@ const Tab1: React.FC<Tab1Props> = ({
     curriculumFileContent,
     setCurriculumFileContent,
 }) => {
+    const [isPpctModalOpen, setIsPpctModalOpen] = useState<boolean>(false);
 
     const handleConfigChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value } = e.target;
@@ -743,6 +753,20 @@ const Tab1: React.FC<Tab1Props> = ({
                             id="sgk-file" 
                             label="File nội dung sách giáo khoa (hoặc ảnh chụp các bài)" 
                             onFileProcessed={setSgkFileContent}
+                            actionButton={
+                                <a
+                                    href="https://drive.google.com/drive/folders/1aGJ1VwU-Yzz-h6Qj6nLeQALgNOMAcwY1?usp=sharing"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-xs font-bold rounded-lg shadow-sm hover:shadow transition transform hover:-translate-y-0.5 shrink-0"
+                                    title="Mở kho tài liệu SGK trên Google Drive"
+                                >
+                                    <svg className="w-4 h-4 fill-current shrink-0" viewBox="0 0 24 24">
+                                        <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/>
+                                    </svg>
+                                    <span>🆘 Nút Hỗ Trợ (Kho SGK)</span>
+                                </a>
+                            }
                         />
                         <p className="text-red-600 dark:text-red-500 font-extrabold text-sm mt-2">
                             Cho phép up nhiều file, nhưng tổng dung lượng không được vượt quá 50MB
@@ -756,6 +780,20 @@ const Tab1: React.FC<Tab1Props> = ({
                             id="curriculum-file" 
                             label="File phân phối chương trình môn học" 
                             onFileProcessed={setCurriculumFileContent}
+                            actionButton={
+                                <button
+                                    type="button"
+                                    onClick={() => setIsPpctModalOpen(true)}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold rounded-lg shadow-sm hover:shadow transition transform hover:-translate-y-0.5 shrink-0"
+                                    title="Xem hình ảnh và cấu trúc file PPCT mẫu chuẩn"
+                                >
+                                    <svg className="w-4 h-4 fill-none stroke-current shrink-0" viewBox="0 0 24 24" strokeWidth="2">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                    </svg>
+                                    <span>👁️ Xem file PPCT mẫu</span>
+                                </button>
+                            }
                         />
                         <p className="text-red-600 dark:text-red-500 font-bold text-sm mt-2">
                             Tải file PPCT LÊN: File này là Phụ lục 1 có tên nội dung bài học, yêu cầu cần đạt. Thầy cô copy phần nội dung từ tuần nào đến tuần nào cho HS kiểm tra từ file PPCT cả năm, tạo thành file mới với tên tùy ý rồi up lên. KHÔNG lấy nguyên file PPCT cả năm up lên AI sẽ tạo ra ma trận cả năm không đúng với yêu cầu mình.
@@ -951,6 +989,12 @@ const Tab1: React.FC<Tab1Props> = ({
                     Tạo Ma Trận & Đặc Tả
                 </button>
             </div>
+
+            {/* Modal xem File mẫu PPCT */}
+            <PpctSampleModal 
+                isOpen={isPpctModalOpen} 
+                onClose={() => setIsPpctModalOpen(false)} 
+            />
         </div>
     );
 };
