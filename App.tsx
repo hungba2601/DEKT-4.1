@@ -176,7 +176,7 @@ const App: React.FC = () => {
   }, []);
 
   const handleLogin = async (email: string, password?: string) => {
-    if (SCRIPT_URL === 'DÁN_URL_WEB_APP_G_SCRIPT_VÀO_ĐÂY') {
+    if ((SCRIPT_URL as string) === 'DÁN_URL_WEB_APP_G_SCRIPT_VÀO_ĐÂY') {
       alert("Bạn chưa cấu hình SCRIPT_URL trong App.tsx. Hãy dán URL từ Google Apps Script vào.");
       return;
     }
