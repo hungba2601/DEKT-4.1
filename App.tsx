@@ -93,11 +93,17 @@ const App: React.FC = () => {
   // Load saved API Key and register Quota Exceeded handler
   useEffect(() => {
     const savedKey = localStorage.getItem('gemini_api_key');
-    const savedModel = localStorage.getItem('ai_model') || 'gemini-3.6-flash';
+    let savedModel = localStorage.getItem('ai_model') || 'gemini-3.6-flash';
+    if (savedModel === 'gemini-3.5-flash') {
+      savedModel = 'gemini-3.8-flash';
+      localStorage.setItem('ai_model', 'gemini-3.8-flash');
+    }
     if (savedKey) {
       setApiKey(savedKey);
       setAiModel(savedModel);
       setGeminiConfig(savedKey, savedModel);
+    } else {
+      setAiModel(savedModel);
     }
 
     // Đăng ký cơ chế tạm dừng khi hết hạn mức API

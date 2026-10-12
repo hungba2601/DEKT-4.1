@@ -6,6 +6,7 @@ interface Tab3Props {
   generatedSpec: SpecData;
   setGeneratedSpec: React.Dispatch<React.SetStateAction<SpecData>>;
   examTitle: string;
+  schoolYear?: string;
   matrixConfig: MatrixConfig;
 }
 
@@ -117,7 +118,7 @@ const formatQ = (count: number, startQNum: number): string => {
     return `${count} (${labels.join(',')})`;
 };
 
-const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle, matrixConfig }) => {
+const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle, schoolYear, matrixConfig }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingContent, setEditingContent] = useState({ text: '', topicIndex: -1, rowIndex: -1 });
   const specContainerRef = useRef<HTMLDivElement>(null);
@@ -217,7 +218,8 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
   const handleExportSpec = () => {
     if (!generatedSpec || generatedSpec.length === 0) return;
 
-    const finalExamTitle = examTitle ? ` ${examTitle.toUpperCase()}` : '';
+    const titleParts = [examTitle ? examTitle.toUpperCase() : '', schoolYear ? `NĂM HỌC ${schoolYear}` : ''].filter(Boolean);
+    const finalExamTitle = titleParts.length > 0 ? ` ${titleParts.join(' - ')}` : '';
 
     let tableHtml = `
       <h2 style="text-align: center; font-weight: bold; font-size: 1.2em; margin-bottom: 20px;">2. BẢN ĐẶC TẢ ĐỀ KIỂM TRA ĐỊNH KÌ${finalExamTitle}</h2>

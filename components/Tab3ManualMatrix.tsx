@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import type { SpecData, MatrixConfig } from '../types';
+import type { SpecData, MatrixConfig, CognitiveLevelQuestionCounts, QuestionCounts } from '../types';
 
 interface Tab3ManualMatrixProps {
   generatedSpec: SpecData;
   matrixConfig: MatrixConfig;
   onConfirm: (spec: SpecData, html: string) => void;
   examTitle: string;
+  schoolYear?: string;
   savedSpec: SpecData | null;
   onSaveSpec: (spec: SpecData) => void;
 }
@@ -78,6 +79,7 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
   matrixConfig, 
   onConfirm,
   examTitle,
+  schoolYear,
   savedSpec,
   onSaveSpec
 }) => {
@@ -116,34 +118,35 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
   }, [manualSpec, isInitialized, onSaveSpec]);
 
 
-  // Handle input changes
+  // Handle number input change
   const handleCountChange = (
-    topicIndex: number, 
-    rowIndex: number, 
-    level: 'nhanBiet' | 'thongHieu' | 'vanDung', // Simplified levels for UI mapping
-    type: 'TN' | 'DS' | 'TNgan' | 'TL',
+    topicIdx: number, 
+    rowIdx: number, 
+    level: keyof CognitiveLevelQuestionCounts, 
+    type: keyof QuestionCounts, 
     value: string
   ) => {
-    const numValue = parseInt(value) || 0;
+    const numValue = parseInt(value, 10);
+    const validValue = isNaN(numValue) || numValue < 0 ? 0 : numValue;
     
     // Reset confirmed state when user modifies data so they know to save again
     if (isConfirmed) setIsConfirmed(false);
 
     // Update state immutably (Deep update)
-    setManualSpec(prev => {
-        return prev.map((topic, tIdx) => {
-            if (tIdx !== topicIndex) return topic;
+    setManualSpec(prevSpec => {
+        return prevSpec.map((topic, tIdx) => {
+            if (tIdx !== topicIdx) return topic;
             return {
                 ...topic,
                 rows: topic.rows.map((row, rIdx) => {
-                    if (rIdx !== rowIndex) return row;
+                    if (rIdx !== rowIdx) return row;
                     return {
                         ...row,
                         soCau: {
                             ...row.soCau,
                             [level]: {
                                 ...row.soCau[level],
-                                [type]: numValue
+                                [type]: validValue
                             }
                         }
                     };
@@ -160,9 +163,9 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
         return;
     }
 
-    const html = generateHtmlFromSpec(manualSpec, matrixConfig, examTitle);
+    const html = generateHtmlFromSpec(manualSpec, matrixConfig, examTitle, schoolYear);
     setPreviewHtml(html);
-  }, [manualSpec, matrixConfig, examTitle]);
+  }, [manualSpec, matrixConfig, examTitle, schoolYear]);
 
   const handleSaveTemp = () => {
      if (manualSpec.length === 0) return;
@@ -183,7 +186,7 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
       exportHtmlToDoc(previewHtml, `Ma_Tran_Tu_Nhap_${examTitle.replace(/\s+/g, '_')}`);
   };
 
-  const generateHtmlFromSpec = (spec: SpecData, config: MatrixConfig, title: string) => {
+  const generateHtmlFromSpec = (spec: SpecData, config: MatrixConfig, title: string, year?: string) => {
         // 1. Calculate Summary Data first to put in Footer
         let sumTN = { nb: 0, th: 0, vd: 0 };
         let sumDS = { nb: 0, th: 0, vd: 0 };
@@ -219,9 +222,12 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
         const percentTNgan = (pointsTNgan / 10) * 100;
         const percentTL = (pointsTL / 10) * 100;
 
+        const titleParts = [title ? title.toUpperCase() : '', year ? `NĂM HỌC ${year}` : ''].filter(Boolean);
+        const finalCaption = titleParts.length > 0 ? ` ${titleParts.join(' - ')}` : '';
+
         // 2. Generate HTML
       let html = `<table border="1" style="width:100%; border-collapse: collapse; font-family: 'Times New Roman', serif; font-size: 11pt; text-align: center;">
-        <caption style="font-weight: bold; font-size: 1.2em; padding: 10px;">MA TRẬN ĐỀ KIỂM TRA ${title.toUpperCase()}</caption>
+        <caption style="font-weight: bold; font-size: 1.2em; padding: 10px;">MA TRẬN ĐỀ KIỂM TRA${finalCaption}</caption>
         <thead>
             <tr>
                 <th rowspan="2" style="width: 3%;">TT</th>
