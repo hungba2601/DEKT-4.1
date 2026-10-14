@@ -1,6 +1,7 @@
 
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import type { MatrixConfig, SpecData } from '../types';
+import { validateAndNormalizeSpec, generateHtmlFromSpec } from '../utils/matrixCalculator';
 
 let userApiKey: string | null = null;
 let currentAiModel: string = 'gemini-3.6-flash';
@@ -334,9 +335,13 @@ export const generateMatrixAndSpec = async (
       `;
   }
 
+  const tongSoCauLon = config.isTuLuan100 ?
+    config.soCauTuLuan :
+    (config.soCauNhieuLuaChon + config.soCauDungSai + config.soCauTraLoiNgan + config.soCauTuLuan);
+
   const soCauTNKQ_va_TL = config.isTuLuan100 ?
     `${config.soCauTuLuan} câu` :
-    `${config.soCauNhieuLuaChon + config.soCauTraLoiNgan + config.soCauTuLuan} câu, ${config.soCauDungSai * config.soYTrongCauDungSai} ý`;
+    `${tongSoCauLon} câu, ${config.soCauDungSai * config.soYTrongCauDungSai} ý`;
 
   const totalQuestionsString = `(${soCauTNKQ_va_TL} - 10.0)`;
 
@@ -549,17 +554,23 @@ export const generateMatrixAndSpec = async (
 
       const parsed = JSON.parse(jsonString);
       
-      if (!parsed.matrix || !Array.isArray(parsed.spec)) {
-        console.error(`Lần ${attempt}: JSON thiếu trường bắt buộc. Keys:`, Object.keys(parsed));
-        lastError = new Error("Dữ liệu JSON từ AI thiếu các trường bắt buộc 'matrix' hoặc 'spec'.");
+      if (!Array.isArray(parsed.spec)) {
+        console.error(`Lần ${attempt}: JSON thiếu trường bắt buộc 'spec'. Keys:`, Object.keys(parsed));
+        lastError = new Error("Dữ liệu JSON từ AI thiếu trường bắt buộc 'spec'.");
         if (attempt < maxJsonRetries) { await wait(2000); continue; }
         throw lastError;
       }
 
-      console.log('Đã parse JSON ma trận thành công.');
+      console.log('Đã parse JSON ma trận thành công. Đang chuẩn hóa spec và tính toán bảng HTML...');
+      // 1. Chuẩn hóa spec để đảm bảo tổng số câu/ý khớp 100% với cấu hình người dùng
+      const normalizedSpec = validateAndNormalizeSpec(parsed.spec, config);
+      // 2. Sinh bảng ma trận HTML chuẩn 100% theo Công văn 7991 bằng thuật toán JavaScript,
+      // loại bỏ hoàn toàn các lỗi tính nhẩm sai số câu / số ý của AI (đặc biệt là Gemini Flash-Lite)
+      const cleanMatrixHtml = generateHtmlFromSpec(normalizedSpec, config, examTitle, schoolYear);
+
       return {
-        matrix: parsed.matrix,
-        spec: parsed.spec,
+        matrix: cleanMatrixHtml,
+        spec: normalizedSpec,
       };
 
     } catch (e: any) {
@@ -609,6 +620,80 @@ export const generateReviewQuestions = async (
     exampleAnswers += `<p>${alphabet[i]} - ${randomAnswer}</p>`;
   }
 
+  // --- TÍNH TOÁN CHÍNH XÁC CHỈ TIÊU SỐ LƯỢNG CÂU HỎI (GẤP 2.5 LẦN) TRƯỚC KHI GỬI PROMPT ---
+  let sumTN = 0;
+  let sumDS_Y = 0;
+  let sumTNgan = 0;
+  let sumTL = 0;
+
+  if (Array.isArray(spec) && spec.length > 0) {
+    spec.forEach(topic => {
+      topic.rows?.forEach(row => {
+        const s = row.soCau;
+        if (s) {
+          sumTN += (s.nhanBiet?.TN || 0) + (s.thongHieu?.TN || 0) + (s.vanDung?.TN || 0) + (s.vanDungCao?.TN || 0);
+          sumDS_Y += (s.nhanBiet?.DS || 0) + (s.thongHieu?.DS || 0) + (s.vanDung?.DS || 0) + (s.vanDungCao?.DS || 0);
+          sumTNgan += (s.nhanBiet?.TNgan || 0) + (s.thongHieu?.TNgan || 0) + (s.vanDung?.TNgan || 0) + (s.vanDungCao?.TNgan || 0);
+          sumTL += (s.nhanBiet?.TL || 0) + (s.thongHieu?.TL || 0) + (s.vanDung?.TL || 0) + (s.vanDungCao?.TL || 0);
+        }
+      });
+    });
+  }
+
+  // Số lượng cơ sở trong 1 đề thi
+  const htmlCounts = extractCountsFromMatrixHtml(matrix, soCauNho);
+
+  const baseTN = sumTN > 0 
+    ? sumTN 
+    : (htmlCounts?.tn || config.soCauNhieuLuaChon || 12);
+
+  const baseDS = sumDS_Y > 0 
+    ? Math.max(1, Math.round(sumDS_Y / soCauNho)) 
+    : (htmlCounts?.dsCau || config.soCauDungSai || 2);
+
+  const baseTNgan = sumTNgan > 0 
+    ? sumTNgan 
+    : (htmlCounts?.tngan || config.soCauTraLoiNgan || 8);
+
+  const baseTL = sumTL > 0 
+    ? sumTL 
+    : (htmlCounts?.tl || config.soCauTuLuan || (config.isTuLuan100 ? 10 : 0));
+
+  // CHỈ TIÊU BẮT BUỘC BỘ ÔN TẬP: GẤP 2.5 LẦN (LÀM TRÒN LÊN)
+  const targetTN = Math.ceil(baseTN * 2.5);
+  const targetDS = Math.ceil(baseDS * 2.5);
+  const targetTNgan = Math.ceil(baseTNgan * 2.5);
+  const targetTL = Math.ceil(baseTL * 2.5);
+  const targetTotal = targetTN + targetDS + targetTNgan + targetTL;
+
+  // Lập bảng chi tiết phân bổ cho từng bài học theo spec
+  let lessonBreakdownText = '';
+  if (Array.isArray(spec) && spec.length > 0) {
+    lessonBreakdownText = '\n--- PHÂN BỔ CHỈ TIÊU CÂU HỎI THEO TỪNG BÀI HỌC (BẮT BUỘC PHẢI TẠO ĐỦ) ---\n';
+    spec.forEach((topic) => {
+      lessonBreakdownText += `\n* CHỦ ĐỀ: ${topic.chuDe}\n`;
+      topic.rows?.forEach((row) => {
+        const s = row.soCau;
+        if (!s) return;
+        const rowTN = Math.ceil(((s.nhanBiet?.TN || 0) + (s.thongHieu?.TN || 0) + (s.vanDung?.TN || 0)) * 2.5);
+        const rowDsY = (s.nhanBiet?.DS || 0) + (s.thongHieu?.DS || 0) + (s.vanDung?.DS || 0);
+        const rowDS = rowDsY > 0 ? Math.ceil((rowDsY / soCauNho) * 2.5) : 0;
+        const rowTNgan = Math.ceil(((s.nhanBiet?.TNgan || 0) + (s.thongHieu?.TNgan || 0) + (s.vanDung?.TNgan || 0)) * 2.5);
+        const rowTL = Math.ceil(((s.nhanBiet?.TL || 0) + (s.thongHieu?.TL || 0) + (s.vanDung?.TL || 0)) * 2.5);
+
+        const items: string[] = [];
+        if (rowTN > 0) items.push(`${rowTN} câu Nhiều lựa chọn`);
+        if (rowDS > 0) items.push(`${rowDS} câu Đúng-Sai (${soCauNho} ý/câu)`);
+        if (rowTNgan > 0) items.push(`${rowTNgan} câu Trả lời ngắn`);
+        if (rowTL > 0) items.push(`${rowTL} câu Tự luận`);
+
+        if (items.length > 0) {
+          lessonBreakdownText += `  - Bài "${row.noiDung}": Phải tạo ${items.join(', ')}.\n`;
+        }
+      });
+    });
+  }
+
   let customInstruction = '';
   if (customPrompt && customPrompt.trim()) {
     customInstruction = `
@@ -632,11 +717,40 @@ export const generateReviewQuestions = async (
         --- YÊU CẦU ---
         Dựa vào TOÀN BỘ các nguồn dữ liệu, hãy tạo ra một bộ **CÂU HỎI ÔN TẬP** đầy đủ và chi tiết. **ƯU TIÊN TUYỆT ĐỐI** thông tin từ **BẢN ĐẶC TẢ** để xác định số lượng, hình thức, và mức độ nhận thức cho từng nội dung.
         ${customInstruction}
+
+        ======================================================================
+        BẢNG CHỈ TIÊU SỐ LƯỢNG BẮT BUỘC CHO BỘ CÂU HỎI ÔN TẬP (GẤP 2.5 LẦN MA TRẬN)
+        ======================================================================
+        Bạn PHẢI tạo ĐỦ và ĐÚNG 100% số lượng câu hỏi theo đúng các chỉ tiêu sau (TUYỆT ĐỐI KHÔNG ĐƯỢC TẠO THIẾU):
+
+        ${targetTN > 0 ? `1. TRẮC NGHIỆM NHIỀU LỰA CHỌN (TN):
+           - Số câu trong 1 đề thi: ${baseTN} câu.
+           - CHỈ TIÊU BẮT BUỘC BỘ ÔN TẬP (GẤP 2.5 LẦN): CHÍNH XÁC ${targetTN} CÂU HỎI.
+           - Mỗi câu có 4 phương án A, B, C, D (dạng table 2 dòng 2 cột) và đáp án chi tiết.` : ''}
+
+        ${targetDS > 0 ? `2. TRẮC NGHIỆM ĐÚNG - SAI (DS):
+           - Số câu lớn trong 1 đề thi: ${baseDS} câu.
+           - CHỈ TIÊU BẮT BUỘC BỘ ÔN TẬP (GẤP 2.5 LẦN): CHÍNH XÁC ${targetDS} CÂU HỎI LỚN.
+           - Cấu trúc mỗi câu lớn: Gồm một câu dẫn và chính xác ${soCauNho} ý phát biểu nhỏ (a, b, c, d) có cả đáp án Đúng và Sai.` : ''}
+
+        ${targetTNgan > 0 ? `3. TRẮC NGHIỆM TRẢ LỜI NGẮN (TNgan):
+           - Số câu trong 1 đề thi: ${baseTNgan} câu.
+           - CHỈ TIÊU BẮT BUỘC BỘ ÔN TẬP (GẤP 2.5 LẦN): CHÍNH XÁC ${targetTNgan} CÂU HỎI.
+           - Mỗi câu hỏi yêu cầu điền từ, cụm từ hoặc con số ngắn gọn kèm đáp án.` : ''}
+
+        ${targetTL > 0 ? `4. TỰ LUẬN (TL):
+           - Số câu trong 1 đề thi: ${baseTL} câu.
+           - CHỈ TIÊU BẮT BUỘC BỘ ÔN TẬP (GẤP 2.5 LẦN): CHÍNH XÁC ${targetTL} CÂU HỎI.
+           - Mỗi câu hỏi có hướng dẫn chấm chi tiết.` : ''}
+
+        >>> TỔNG CỘNG TOÀN BỘ BỘ CÂU HỎI ÔN TẬP PHẢI CÓ ĐỦ: ${targetTotal} CÂU HỎI. <<<
+        ${lessonBreakdownText}
+
         --- QUY TẮC CHUNG TẠO CÂU HỎI (RẤT QUAN TRỌNG) ---
         1.  **Bám sát Đặc tả và Ma trận:** Tạo câu hỏi cho TẤT CẢ các nội dung/chủ đề được liệt kê trong bản đặc tả và ma trận. "Yêu cầu cần đạt" trong bản đặc tả là kim chỉ nam cho nội dung câu hỏi.
-        2.  **Số lượng (CỰC KỲ QUAN TRỌNG):** Tạo ra số lượng câu hỏi CHÍNH XÁC GẤP 2.5 LẦN so với yêu cầu trong cột "soCau" của bản đặc tả cho mỗi loại. Ví dụ: nếu bản đặc tả yêu cầu 4 câu trắc nghiệm mức độ Nhận biết, bạn phải tạo ra chính xác 4 * 2.5 = 10 câu. Nếu kết quả phép nhân không phải là số nguyên (ví dụ: 1 * 2.5 = 2.5), hãy làm tròn lên thành số nguyên tiếp theo (tức là 3 câu). Đây là yêu cầu bắt buộc và phải được tuân thủ nghiêm ngặt.
-        3.  **Hình thức câu hỏi (CỰC KỲ QUAN TRỌNG):** Chỉ tạo các loại câu hỏi (Trắc nghiệm nhiều lựa chọn - TN, Đúng-Sai - DS, Trả lời ngắn - TNgan, Tự luận - TL) được chỉ định trong bản đặc tả. Nếu tổng số câu của một hình thức nào đó trong toàn bộ bản đặc tả là 0, thì TUYỆT ĐỐI KHÔNG được tạo ra bất kỳ câu hỏi nào thuộc hình thức đó.
-        4.  **Bao phủ mức độ:** Câu hỏi phải bao quát đủ các mức độ (Nhận biết, Thông hiểu, Vận dụng, Vận dụng cao) như đã được phân bổ trong bản đặc tả.
+        2.  **Số lượng (CỰC KỲ QUAN TRỌNG - TUYỆT ĐỐI TUÂN THỦ):** Bạn PHẢI tạo ĐỦ và ĐÚNG CHÍNH XÁC ${targetTotal} câu hỏi như bảng chỉ tiêu ở trên (gồm ${targetTN} câu Nhiều lựa chọn, ${targetDS} câu Đúng-Sai, ${targetTNgan} câu Trả lời ngắn, ${targetTL} câu Tự luận). TUYỆT ĐỐI KHÔNG ĐƯỢC TẠO THIẾU HOẶC DỪNG LẠI GIỮA CHỪNG.
+        3.  **Hình thức câu hỏi:** Chỉ tạo các loại câu hỏi được chỉ định trong bảng chỉ tiêu. Nếu tổng số câu của hình thức nào là 0 thì không tạo loại đó.
+        4.  **Bao phủ mức độ:** Câu hỏi phải bao quát đủ các mức độ (Nhận biết, Thông hiểu, Vận dụng) như đã phân bổ.
         5.  **Nội dung từ SGK:** Tất cả nội dung câu hỏi và đáp án phải được lấy từ file SÁCH GIÁO KHOA đã cung cấp.
         6.  **Đáp án chi tiết:** Cung cấp đáp án CHI TIẾT và RÕ RÀNG cho TẤT CẢ các câu hỏi. Đối với câu tự luận, hãy cung cấp hướng dẫn chấm điểm cơ bản.
         
@@ -657,7 +771,6 @@ export const generateReviewQuestions = async (
            - **TUYỆT ĐỐI CẤM:** Không được để đáp án đúng tập trung vào một chữ cái cụ thể (như B hoặc A) cho nhiều câu hỏi liên tiếp. Tránh các quy luật dễ đoán.
            - **YÊU CẦU PHÂN BỔ ĐỀU:** Bạn phải phân bổ đáp án đúng sao cho tỷ lệ các phương án A, B, C, D được chọn làm đáp án đúng là xấp xỉ ngang nhau (khoảng 25% cho mỗi chữ cái) xuyên suốt từ đầu đến cuối bộ câu hỏi.
            - **PHẢI KIỂM TRA LẠI TỔNG THỂ:** Trước khi hoàn tất, hãy đếm lại số lượng đáp án A, B, C, D. Nếu một chữ cái chiếm quá 35% tổng số câu hỏi trắc nghiệm, bạn PHẢI hoán vị lại vị trí đáp án của các câu hỏi để đưa tỷ lệ về mức cân bằng.
-           - **MẸO:** Đừng để tình trạng các bài học đầu tiên thì xáo trộn tốt, nhưng các bài học phía sau thì đáp án đúng lại lặp lại một mẫu nhất định. Mọi câu hỏi phải được đối xử công bằng và ngẫu nhiên.
 
         --- QUY TẮC RIÊNG CHO CÂU HỎI ĐÚNG/SAI (CỰC KỲ QUAN TRỌNG) ---
         11.  Mỗi câu hỏi dạng Đúng/Sai PHẢI bao gồm một câu dẫn chung và chính xác **${soCauNho}** câu phát biểu nhỏ (đánh dấu a, b, c, d, ...). Người học sẽ đánh giá từng phát biểu là Đúng hay Sai.
@@ -686,19 +799,56 @@ export const generateReviewQuestions = async (
         -   Sử dụng thẻ '<h3>' cho tên mỗi CHỦ ĐỀ/NỘI DUNG.
         -   Sử dụng thẻ '<h4>' cho các mục nhỏ hơn như "I. TRẮC NGHIỆM", "II. TỰ LUẬN", "Mức độ Nhận biết", v.v.
         -   Mỗi câu hỏi phải được đặt trong một thẻ '<p>'. Ví dụ: '<p><strong>Câu 1 (NB):</strong> Nội dung câu hỏi...</p>'.
-        -   Các lựa chọn trắc nghiệm PHẢI sử dụng thẻ TABLE như hướng dẫn ở mục 8.
+        -   Các lựa chọn trắc nghiệm PHẢI sử dụng thẻ TABLE như hướng dẫn ở mục 9.
         -   **QUAN TRỌNG:** Đáp án phải được đặt ngay sau câu hỏi và nằm trong một thẻ '<div>' với class là '"answer"'. Ví dụ: '<div class="answer"><strong>Đáp án:</strong> A. Lựa chọn A.</div>'.
 
         --- CẤM TUYỆT ĐỐI ---
         - TUYỆT ĐỐI KHÔNG ghi các lời chào, giới thiệu, dẫn dắt, giải thích hoặc kết luận ở đầu và cuối phản hồi (ví dụ: "Dưới đây là...", "Bộ câu hỏi này...", "Hy vọng nó hữu ích..."). 
         - Phản hồi CHỈ được phép chứa duy nhất nội dung HTML của các câu hỏi và đáp án theo đúng định dạng đã yêu cầu.
+        - TUYỆT ĐỐI KHÔNG DỪNG LẠI KHI CHƯA VIẾT ĐỦ ${targetTotal} CÂU HỎI.
     `;
 
-  // --- SỬ DỤNG callWithRetry ---
+  // --- SỬ DỤNG callWithRetry VỚI maxOutputTokens 16384 ĐỂ KHÔNG BỊ NGẮT QUÃNG ---
   const response = await callWithRetry<GenerateContentResponse>(() => 
-    getAiClient().models.generateContent({ model, contents: prompt })
+    getAiClient().models.generateContent({
+      model,
+      contents: prompt,
+      config: {
+        maxOutputTokens: 16384,
+      }
+    })
   );
   return response.text || "";
+};
+
+/**
+ * Phân tích bảng ma trận HTML để lấy chính xác số lượng câu hỏi từng phần
+ */
+export const extractCountsFromMatrixHtml = (matrixHtml: string, soY: number = 4) => {
+  if (!matrixHtml) return null;
+  try {
+    const rowMatch = matrixHtml.match(/<tr[^>]*>[\s\S]*?Tổng\s*\(Số câu[\s\S]*?<\/tr>/i);
+    if (!rowMatch) return null;
+
+    const tdMatches = [...rowMatch[0].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => m[1].trim());
+    if (tdMatches.length >= 13) {
+      const parseCount = (str: string) => {
+        const match = str.match(/\((\d+)/);
+        return match ? parseInt(match[1], 10) : 0;
+      };
+
+      const tn = parseCount(tdMatches[1]) + parseCount(tdMatches[2]) + parseCount(tdMatches[3]);
+      const dsY = parseCount(tdMatches[4]) + parseCount(tdMatches[5]) + parseCount(tdMatches[6]);
+      const tngan = parseCount(tdMatches[7]) + parseCount(tdMatches[8]) + parseCount(tdMatches[9]);
+      const tl = parseCount(tdMatches[10]) + parseCount(tdMatches[11]) + parseCount(tdMatches[12]);
+
+      const dsCau = soY > 0 ? Math.round(dsY / soY) : 0;
+      return { tn, dsCau, dsY, tngan, tl };
+    }
+  } catch (e) {
+    console.warn("Lỗi khi trích xuất số lượng câu hỏi từ HTML ma trận:", e);
+  }
+  return null;
 };
 
 /**
@@ -711,18 +861,57 @@ const generateSingleExam = async (
   sgkText: string,
   similarityPercentage: number,
   examTemplateContent?: string,
-  soYTrongCauDungSai: number = 4,
+  matrixConfigOrSoY?: MatrixConfig | number,
   examTitle?: string,
   schoolYear?: string
 ): Promise<string> => {
   const model = currentAiModel;
 
-  const similarityInstruction = `
+  const isConfigObj = typeof matrixConfigOrSoY === 'object' && matrixConfigOrSoY !== null;
+  const config = isConfigObj ? (matrixConfigOrSoY as MatrixConfig) : null;
+  const soY = config?.soYTrongCauDungSai || (typeof matrixConfigOrSoY === 'number' ? matrixConfigOrSoY : 4);
+  const isTuLuan100 = !!config?.isTuLuan100;
+
+  // Ưu tiên 100% config do người dùng cấu hình (từ Tab 1 hoặc Tab 3). Chỉ dùng htmlCounts nếu config không tồn tại.
+  const soCauNhieuLuaChon = (config && Number(config.soCauNhieuLuaChon) > 0)
+    ? Number(config.soCauNhieuLuaChon)
+    : (htmlCounts && htmlCounts.tn > 0 ? htmlCounts.tn : 12);
+
+  const soCauDungSai = (config && config.soCauDungSai !== undefined && config.soCauDungSai !== null && Number(config.soCauDungSai) >= 0)
+    ? Number(config.soCauDungSai)
+    : (htmlCounts && htmlCounts.dsCau > 0 ? htmlCounts.dsCau : 2);
+
+  const soCauTraLoiNgan = (config && config.soCauTraLoiNgan !== undefined && config.soCauTraLoiNgan !== null && Number(config.soCauTraLoiNgan) >= 0)
+    ? Number(config.soCauTraLoiNgan)
+    : (htmlCounts && htmlCounts.tngan > 0 ? htmlCounts.tngan : 8);
+
+  const soCauTuLuan = (config && config.soCauTuLuan !== undefined && config.soCauTuLuan !== null && Number(config.soCauTuLuan) >= 0)
+    ? Number(config.soCauTuLuan)
+    : (htmlCounts && htmlCounts.tl > 0 ? htmlCounts.tl : (isTuLuan100 ? 10 : 0));
+
+  const diemCauNhieuLuaChon = config?.diemCauNhieuLuaChon ?? 0.25;
+  const diemMoiY = config?.diemMoiYTrongCauDungSai ?? 0.25;
+  const diem1CauDS = soY * diemMoiY;
+  const diemCauTraLoiNgan = config?.diemCauTraLoiNgan ?? 0.25;
+  const diemCauTuLuan = config?.diemCauTuLuan ?? 1.0;
+
+  const tongDiemNLC = soCauNhieuLuaChon * diemCauNhieuLuaChon;
+  const tongDiemDS = soCauDungSai * diem1CauDS;
+  const tongDiemTNgan = soCauTraLoiNgan * diemCauTraLoiNgan;
+  const tongDiemTL = soCauTuLuan * diemCauTuLuan;
+
+  const sgkSection = sgkText ? fileToText(sgkText, "Sách giáo khoa (Bổ trợ nếu ngân hàng câu hỏi thiếu)") : "";
+
+  const similarityInstruction = similarityPercentage >= 100 ? `
         --- QUY TẮC VỀ NGUỒN CÂU HỎI (CỰC KỲ QUAN TRỌNG) ---
-        -   TOÀN BỘ câu hỏi PHẢI được lấy từ "NGÂN HÀNG CÂU HỎI" đã cung cấp.
-        -   Nếu số lượng câu hỏi trong "NGÂN HÀNG CÂU HỎI" không đủ để tạo ra các đề khác biệt hoàn toàn, bạn ĐƯỢC PHÉP sử dụng lại các câu hỏi đã có (chấp nhận các đề giống nhau về câu hỏi) nhưng BẮT BUỘC PHẢI xáo trộn thứ tự câu hỏi và hoán vị thứ tự các phương án A, B, C, D một cách ngẫu nhiên.
-        -   Tuyệt đối không sử dụng các nguồn kiến thức bên ngoài nếu không có trong ngân hàng câu hỏi.
-    `;
+        -   Ưu tiên lấy câu hỏi từ "NGÂN HÀNG CÂU HỎI" đã cung cấp.
+        -   Nếu "NGÂN HÀNG CÂU HỎI" thiếu bất kỳ loại câu hỏi nào (ví dụ thiếu Đúng-Sai, thiếu Tự luận, hoặc thiếu Trả lời ngắn), bạn BẮT BUỘC PHẢI tự động biên soạn thêm các câu hỏi chất lượng cao dựa trên nội dung Sách giáo khoa / kiến thức chuẩn để đảm bảo đề thi có ĐỦ 100% tất cả 4 phần theo đúng cấu trúc yêu cầu! TUYỆT ĐỐI KHÔNG ĐƯỢC BỎ BỚT BẤT KỲ PHẦN NÀO!
+        -   BẮT BUỘC PHẢI xáo trộn thứ tự câu hỏi và hoán vị thứ tự các phương án A, B, C, D một cách ngẫu nhiên.
+  ` : `
+        --- QUY TẮC VỀ NGUỒN CÂU HỎI (CỰC KỲ QUAN TRỌNG) ---
+        -   Lấy khoảng ${similarityPercentage}% câu hỏi từ "NGÂN HÀNG CÂU HỎI".
+        -   Phần còn lại (${100 - similarityPercentage}%) và bất kỳ loại câu hỏi nào còn thiếu trong ngân hàng câu hỏi, bạn PHẢI tự động biên soạn câu hỏi mới bám sát nội dung Sách giáo khoa đã cung cấp.
+  `;
 
   let formatInstruction = '';
   const titleHeader = [
@@ -736,6 +925,7 @@ const generateSingleExam = async (
             1.  **SỬ DỤNG MẪU HTML:** Bạn PHẢI sử dụng đoạn mã HTML trong "FILE MẪU (HTML)" dưới đây làm khuôn mẫu TUYỆT ĐỐI cho đề thi này.
             2.  **BẢO TOÀN CẤU TRÚC:** Đầu ra của bạn phải là một chuỗi HTML hoàn chỉnh. TUYỆT ĐỐI không được thay đổi cấu trúc, các thẻ HTML (<table>, <div>, <p>, <span>), các class, hoặc style inline của file mẫu. Hãy giữ nguyên định dạng y hệt.
             3.  **THAY THẾ NỘI DUNG:** Tìm các vị trí giữ chỗ (placeholders) trong file mẫu và thay thế chúng bằng câu hỏi và đáp án tương ứng. Cập nhật đúng Tiêu đề kỳ kiểm tra (${examTitle || ''}), Năm học (${schoolYear || ''}) và Đề số (${index}) vào phần thông tin đầu trang.
+            4.  **SỐ LƯỢNG CÂU HỎI:** Bắt buộc tuân thủ đúng ${soCauNhieuLuaChon} câu Nhiều lựa chọn, ${soCauDungSai} câu Đúng-Sai, ${soCauTraLoiNgan} câu Trả lời ngắn, ${soCauTuLuan} câu Tự luận.
             
             --- FILE MẪU (HTML) ---
             ${examTemplateContent}
@@ -745,41 +935,98 @@ const generateSingleExam = async (
             --- QUY TẮC ĐỊNH DẠNG ---
             Định dạng đầu ra phải là HTML.
             -   Đề thi phải có tiêu đề rõ ràng ở đầu trang (ví dụ: "${titleHeader} - ĐỀ SỐ ${index}").
-            -   Chia rõ các phần chi tiết (nếu có trong ma trận), BẮT BUỘC ghi rõ tiêu đề mỗi phần kèm theo "(Số câu hỏi - Tổng điểm)". Ví dụ cấu trúc chuẩn:
-                + "PHẦN I: TRẮC NGHIỆM NHIỀU PHƯƠNG ÁN LỰA CHỌN (... câu - ... điểm)"
-                + "PHẦN II: TRẮC NGHIỆM ĐÚNG SAI (... câu - ... điểm)"
-                + "PHẦN III: TRẮC NGHIỆM TRẢ LỜI NGẮN (... câu - ... điểm)"
-                + "PHẦN IV: TỰ LUẬN (nếu có) (... câu - ... điểm)"
-            -   Sau phần đề thi, phải có phần "ĐÁP ÁN VÀ HƯỚNG DẪN CHẤM" chi tiết.
+            ${isTuLuan100 ? `
+            -   Đề thi 100% tự luận: Ghi rõ tiêu đề "PHẦN TỰ LUẬN (${soCauTuLuan} câu - 10.0 điểm)".
+            ` : `
+            -   Chia rõ các phần chi tiết và BẮT BUỘC ghi rõ tiêu đề mỗi phần kèm theo "(Số câu hỏi - Tổng điểm)" CHÍNH XÁC như sau:
+                ${soCauNhieuLuaChon > 0 ? `+ "PHẦN I. Câu trắc nghiệm nhiều phương án lựa chọn (${soCauNhieuLuaChon} câu - ${tongDiemNLC.toFixed(2)} điểm)"` : ''}
+                ${soCauDungSai > 0 ? `+ "PHẦN II. Câu trắc nghiệm đúng sai (${soCauDungSai} câu - ${tongDiemDS.toFixed(2)} điểm)"` : ''}
+                ${soCauTraLoiNgan > 0 ? `+ "PHẦN III. Câu trắc nghiệm trả lời ngắn (${soCauTraLoiNgan} câu - ${tongDiemTNgan.toFixed(2)} điểm)"` : ''}
+                ${soCauTuLuan > 0 ? `+ "PHẦN IV. Tự luận (${soCauTuLuan} câu - ${tongDiemTL.toFixed(2)} điểm)"` : ''}
+            `}
+            -   Sau khi viết xong TOÀN BỘ các phần của đề thi, chèn ngắt trang \`<div style="page-break-before: always;"></div>\`, sau đó mới đến phần "ĐÁP ÁN VÀ HƯỚNG DẪN CHẤM" chi tiết gồm:
+                ${soCauNhieuLuaChon > 0 ? `+ Bảng đáp án Phần I (gồm ${soCauNhieuLuaChon} câu).` : ''}
+                ${soCauDungSai > 0 ? `+ Bảng đáp án Phần II (gồm ${soCauDungSai} câu lớn, mỗi câu có ${soY} ý a, b, c, d rõ Đúng/Sai).` : ''}
+                ${soCauTraLoiNgan > 0 ? `+ Bảng đáp án Phần III (gồm ${soCauTraLoiNgan} câu ngắn).` : ''}
+                ${soCauTuLuan > 0 ? `+ Đáp án và hướng dẫn chấm Phần IV (gồm ${soCauTuLuan} câu tự luận).` : ''}
         `;
   }
 
   const prompt = `
         Bạn là một AI chuyên tạo đề kiểm tra chất lượng cao. 
-        Đây là đề thi số **${index}** trong bộ 3 đề. Hãy đảm bảo nó được xáo trộn thứ tự câu hỏi và thứ tự đáp án. Nếu ngân hàng câu hỏi không đủ để tạo các đề khác biệt (khi chọn 100%), bạn hãy sử dụng lại câu hỏi từ ngân hàng nhưng phải xáo trộn chúng.
+        Đây là đề thi số **${index}** trong bộ 3 đề. Hãy đảm bảo nó được xáo trộn thứ tự câu hỏi và thứ tự đáp án.
 
         --- NGUỒN DỮ LIỆU ---
-        1.  **NGÂN HÀNG CÂU HỎI (NGUỒN CHÍNH VÀ DUY NHẤT):** ${reviewText}
+        1.  **NGÂN HÀNG CÂU HỎI (NGUỒN CHÍNH):** ${reviewText}
         2.  **MA TRẬN ĐỀ KIỂM TRA (BẮT BUỘC TUÂN THỦ):** ${matrixText}
+        ${sgkSection}
         
         ${similarityInstruction}
 
-        --- QUY TẮC TẠO ĐỀ (BẮT BUỘC) ---
-        1.  **TUÂN THỦ MA TRẬN:** Đề thi phải tuân thủ CHÍNH XÁC 100% về số lượng câu hỏi, điểm số, và mức độ nhận thức như ma trận.
-        2.  **4 ĐÁP ÁN TRẮC NGHIỆM (CỰC KỲ QUAN TRỌNG):** Mỗi câu hỏi trắc nghiệm nhiều phương án lựa chọn **BẮT BUỘC PHẢI CÓ ĐỦ 4 PHƯƠNG ÁN A, B, C, D**. Tuyệt đối không được thiếu phương án nào.
-        3.  **BẢO TOÀN SỐ Ý CÂU ĐÚNG/SAI (CỰC KỲ QUAN TRỌNG):** Mỗi câu hỏi Đúng/Sai PHẢI có chính xác **${soYTrongCauDungSai} ý nhỏ** (a, b, c, d...). Giữ nguyên CẤU TRÚC và SỐ LƯỢNG ý nhỏ của các câu hỏi Đúng/Sai từ Ngân hàng câu hỏi. LƯU Ý: Các ý nhỏ trong Ngân hàng câu hỏi đã có sẵn chữ cái "a. ", "b. ", "c. " ở đầu câu. Khi sao chép vào đề thi, TUYỆT ĐỐI KHÔNG được thêm một chữ cái "a. " hay "b. " nào nữa vào trước nó để tránh lỗi lặp chữ (ví dụ lỗi sai: "a. a. Máy tính...", lỗi đúng: "a. Máy tính...").
-        4.  **XÁO TRỘN ĐÁP ÁN ĐÚNG (CỰC KỲ QUAN TRỌNG):** Đối với các câu trắc nghiệm, bạn PHẢI xáo trộn vị trí đáp án đúng một cách ngẫu nhiên tuyệt đối giữa A, B, C, D. 
-        5.  **PHÂN BỔ ĐÁP ÁN ĐỀU:** Đảm bảo số lượng đáp án đúng là A, B, C, D trong toàn bộ đề thi phải xấp xỉ bằng nhau (ví dụ: mỗi loại chiếm khoảng 25%). TUYỆT ĐỐI không để một chữ cái nào (như B) xuất hiện áp đảo.
-        6.  **QUY TẮC VỀ KÝ HIỆU TOÁN HỌC:** Chỉ sử dụng LaTeX ($...$ hoặc $$...$$) cho công thức. Không dùng $ cho văn bản thường.
-        7.  **TÁCH TRANG ĐÁP ÁN:** Chèn \`<div style="page-break-before: always;"></div>\` trước phần ĐÁP ÁN.
-        8.  **ĐỊNH DẠNG BẢNG ĐÁP ÁN:** Dùng bảng NGANG cho đáp án trắc nghiệm ở cuối đề.
-        9.  **ĐỊNH DẠNG TABLE CHO ĐÁP ÁN:** BẮT BUỘC dùng HTML TABLE không viền (border="0") để trình bày 4 phương án A, B, C, D theo cấu trúc **2 dòng 2 cột** (A và B ở dòng trên, C và D ở dòng dưới). TUYỆT ĐỐI KHÔNG dàn hàng ngang 4 cột. Cấu trúc HTML BẮT BUỘC: \`<table style="width:100%; border:none; table-layout:fixed;"><tr><td style="border:none; width:50%;">A. ...</td><td style="border:none; width:50%;">B. ...</td></tr><tr><td style="border:none; width:50%;">C. ...</td><td style="border:none; width:50%;">D. ...</td></tr></table>\`. Phải chia đều 50% khoảng cách 2 cột.
-        10. **KIỂM TRA TỶ LỆ:** Trước khi xuất kết quả, hãy tự đếm lại bảng đáp án. Nếu có quá nhiều đáp án giống nhau nằm liên tiếp hoặc một chữ cái xuất hiện quá nhiều, hãy hoán vị lại phương án của các câu hỏi đó.
-        11. **ĐÁNH SỐ THỨ TỰ CÂU HỎI (BẮT BUỘC):** Đánh số thứ tự các câu hỏi trong đề thi PHẢI KHỚP TUYỆT ĐỐI với số thứ tự được đánh trong MA TRẬN. Cụ thể:
-            - Trắc nghiệm Nhiều lựa chọn: Đánh số liên tục Câu 1, Câu 2, Câu 3... từ đầu đến cuối phần này.
-            - Trắc nghiệm Đúng - Sai: Đánh số liên tục Câu 1, Câu 2, Câu 3... cho các câu lớn (bên trong là các ý a, b, c, d). Đánh số độc lập bắt đầu từ 1 đối với phần này.
-            - Trắc nghiệm Trả lời ngắn: Đánh số ĐỘC LẬP, BẮT ĐẦU LẠI TỪ CÂU 1 (Câu 1, Câu 2, Câu 3...).
-            - Tự luận: Đánh số ĐỘC LẬP, BẮT ĐẦU LẠI TỪ CÂU 1 (Câu 1, Câu 2, Câu 3...).
+        ======================================================================
+        CẤU TRÚC ĐỀ THI VÀ SỐ LƯỢNG CÂU HỎI BẮT BUỘC (TUYỆT ĐỐI TUÂN THỦ 100%)
+        ======================================================================
+        Đề thi BẮT BUỘC phải tạo ĐỦ và ĐÚNG TẤT CẢ các phần sau đây, TUYỆT ĐỐI KHÔNG ĐƯỢC THIẾU BẤT KỲ PHẦN NÀO:
+
+        ${isTuLuan100 ? `
+        - PHẦN TỰ LUẬN: CHÍNH XÁC ${soCauTuLuan} CÂU (Đánh số từ Câu 1 đến Câu ${soCauTuLuan}). Tổng điểm: 10.0 điểm.
+        ` : `
+        ${soCauNhieuLuaChon > 0 ? `
+        PHẦN I: TRẮC NGHIỆM NHIỀU PHƯƠNG ÁN LỰA CHỌN
+        - Tiêu đề bắt buộc: "PHẦN I. Câu trắc nghiệm nhiều phương án lựa chọn (${soCauNhieuLuaChon} câu - ${tongDiemNLC.toFixed(2)} điểm)"
+        - Số lượng câu hỏi: CHÍNH XÁC ${soCauNhieuLuaChon} CÂU (Đánh số liên tục từ Câu 1 đến Câu ${soCauNhieuLuaChon}).
+        - Mỗi câu có 4 phương án A, B, C, D (dạng table 2 dòng 2 cột) và chỉ 1 đáp án đúng.
+        - Điểm: ${diemCauNhieuLuaChon} điểm/câu (Tổng: ${tongDiemNLC.toFixed(2)} điểm).
+        ` : ''}
+
+        ${soCauDungSai > 0 ? `
+        PHẦN II: TRẮC NGHIỆM ĐÚNG SAI (BẮT BUỘC PHẢI CÓ TRONG ĐỀ THI)
+        - Tiêu đề bắt buộc: "PHẦN II. Câu trắc nghiệm đúng sai (${soCauDungSai} câu - ${tongDiemDS.toFixed(2)} điểm)"
+        - Số lượng câu hỏi: CHÍNH XÁC ${soCauDungSai} CÂU HỎI LỚN (Đánh số độc lập: từ Câu 1 đến Câu ${soCauDungSai}).
+        - CẢNH BÁO CỰC KỲ QUAN TRỌNG: BẮT BUỘC TẠO ĐỦ ${soCauDungSai} CÂU HỎI LỚN! TUYỆT ĐỐI KHÔNG ĐƯỢC BỎ QUA PHẦN NÀY!
+        - Cấu trúc mỗi câu hỏi lớn: Gồm một câu dẫn và chính xác ${soY} ý nhỏ (đánh dấu a, b, c, d). Tổng cộng phần này có ${soCauDungSai * soY} ý nhỏ.
+        - Điểm: Mỗi ý đúng ${diemMoiY} điểm (1 câu lớn = ${diem1CauDS.toFixed(2)} điểm; Tổng: ${tongDiemDS.toFixed(2)} điểm).
+        ` : ''}
+
+        ${soCauTraLoiNgan > 0 ? `
+        PHẦN III: TRẮC NGHIỆM TRẢ LỜI NGẮN (BẮT BUỘC PHẢI CÓ TRONG ĐỀ THI)
+        - Tiêu đề bắt buộc: "PHẦN III. Câu trắc nghiệm trả lời ngắn (${soCauTraLoiNgan} câu - ${tongDiemTNgan.toFixed(2)} điểm)"
+        - Số lượng câu hỏi: CHÍNH XÁC ${soCauTraLoiNgan} CÂU (Đánh số độc lập: từ Câu 1 đến Câu ${soCauTraLoiNgan}).
+        - CẢNH BÁO CỰC KỲ QUAN TRỌNG: BẮT BUỘC TẠO ĐỦ ${soCauTraLoiNgan} CÂU! TUYỆT ĐỐI KHÔNG ĐƯỢC BỎ QUA PHẦN NÀY!
+        - Điểm: ${diemCauTraLoiNgan} điểm/câu (Tổng: ${tongDiemTNgan.toFixed(2)} điểm).
+        ` : ''}
+
+        ${soCauTuLuan > 0 ? `
+        PHẦN IV: TỰ LUẬN (BẮT BUỘC PHẢI CÓ TRONG ĐỀ THI)
+        - Tiêu đề bắt buộc: "PHẦN IV. Tự luận (${soCauTuLuan} câu - ${tongDiemTL.toFixed(2)} điểm)"
+        - Số lượng câu hỏi: CHÍNH XÁC ${soCauTuLuan} CÂU (Đánh số độc lập: từ Câu 1 đến Câu ${soCauTuLuan}).
+        - CẢNH BÁO CỰC KỲ QUAN TRỌNG: BẮT BUỘC TẠO ĐỦ ${soCauTuLuan} CÂU TỰ LUẬN! TUYỆT ĐỐI KHÔNG ĐƯỢC BỎ QUA PHẦN NÀY!
+        - Điểm: ${diemCauTuLuan} điểm/câu (Tổng: ${tongDiemTL.toFixed(2)} điểm).
+        ` : ''}
+        `}
+
+        --- THỨ TỰ TRÌNH BÀY NỘI DUNG ĐỀ THI (BẮT BUỘC TUÂN THỦ TỪNG BƯỚC) ---
+        1. Tiêu đề: "${titleHeader} - ĐỀ SỐ ${index}".
+        ${soCauNhieuLuaChon > 0 ? `2. Viết toàn bộ PHẦN I (${soCauNhieuLuaChon} câu trắc nghiệm nhiều lựa chọn).` : ''}
+        ${soCauDungSai > 0 ? `3. Viết toàn bộ PHẦN II (${soCauDungSai} câu trắc nghiệm Đúng-Sai, mỗi câu có ${soY} ý a, b, c, d).` : ''}
+        ${soCauTraLoiNgan > 0 ? `4. Viết toàn bộ PHẦN III (${soCauTraLoiNgan} câu trắc nghiệm Trả lời ngắn).` : ''}
+        ${soCauTuLuan > 0 ? `5. Viết toàn bộ PHẦN IV (${soCauTuLuan} câu Tự luận).` : ''}
+        6. KẾT THÚC CÂU HỎI ĐỀ THI -> Chèn ngắt trang: \`<div style="page-break-before: always;"></div>\`
+        7. Sau đó mới viết tiêu đề: "ĐÁP ÁN VÀ HƯỚNG DẪN CHẤM":
+           - Bảng đáp án trắc nghiệm Phần I (${soCauNhieuLuaChon} câu).
+           ${soCauDungSai > 0 ? `- Bảng đáp án Đúng/Sai Phần II (${soCauDungSai} câu, các ý a, b, c, d).` : ''}
+           ${soCauTraLoiNgan > 0 ? `- Bảng đáp án Trả lời ngắn Phần III (${soCauTraLoiNgan} câu).` : ''}
+           ${soCauTuLuan > 0 ? `- Đáp án và hướng dẫn chấm Phần IV (${soCauTuLuan} câu tự luận).` : ''}
+        
+        CẢNH BÁO CỰC KỲ QUAN TRỌNG: TUYỆT ĐỐI KHÔNG ĐƯỢC chèn phần ĐÁP ÁN ngay sau Phần I! Phải viết tuần tự hết tất cả các phần câu hỏi (I, II, III, IV), rồi mới được viết phần ĐÁP ÁN ở cuối cùng!
+
+        --- QUY TẮC ĐỊNH DẠNG (BẮT BUỘC) ---
+        - BẮT BUỘC dùng HTML TABLE không viền (border="0") để trình bày 4 phương án A, B, C, D theo cấu trúc 2 dòng 2 cột.
+        - ĐÁNH SỐ THỨ TỰ CÂU HỎI:
+          ${soCauNhieuLuaChon > 0 ? `+ Phần I: Đánh số từ Câu 1 đến Câu ${soCauNhieuLuaChon}.` : ''}
+          ${soCauDungSai > 0 ? `+ Phần II: Đánh số độc lập từ Câu 1 đến Câu ${soCauDungSai}.` : ''}
+          ${soCauTraLoiNgan > 0 ? `+ Phần III: Đánh số độc lập từ Câu 1 đến Câu ${soCauTraLoiNgan}.` : ''}
+          ${soCauTuLuan > 0 ? `+ Phần IV: Đánh số độc lập từ Câu 1 đến Câu ${soCauTuLuan}.` : ''}
 
         ${formatInstruction}
 
@@ -791,7 +1038,9 @@ const generateSingleExam = async (
     getAiClient().models.generateContent({
       model,
       contents: prompt,
-      // KHÔNG sử dụng responseMimeType: "application/json" ở đây để tránh lỗi escape HTML quá dài gây đứng chương trình
+      config: {
+        maxOutputTokens: 16384,
+      }
     })
   );
 
@@ -820,7 +1069,7 @@ export const generateExams = async (
   examTemplateContent?: string,
   startIndex: number = 1,
   count: number = 3,
-  soYTrongCauDungSai: number = 4,
+  matrixConfigOrSoY?: MatrixConfig | number,
   examTitle?: string,
   schoolYear?: string
 ): Promise<string[]> => {
@@ -835,7 +1084,17 @@ export const generateExams = async (
   try {
     for (const i of indices) {
       console.log(`Đang tạo đề thi số ${i}...`);
-      const exam = await generateSingleExam(i, reviewText, matrixText, "", similarityPercentage, examTemplateContent, soYTrongCauDungSai, examTitle, schoolYear);
+      const exam = await generateSingleExam(
+        i, 
+        reviewText, 
+        matrixText, 
+        sgkFileContent, 
+        similarityPercentage, 
+        examTemplateContent, 
+        matrixConfigOrSoY, 
+        examTitle, 
+        schoolYear
+      );
       exams.push(exam);
       console.log(`Đã hoàn thành đề thi số ${i}.`);
       // Delay 2 giây giữa các lần gọi để tránh rate limit (429)

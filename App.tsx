@@ -355,6 +355,32 @@ const App: React.FC = () => {
     setGeneratedSpec(newSpec);
     setManualMatrixHtml(newMatrixHtml);
     setManualSpecStore(newSpec); // Also update the manual store so it persists when they come back
+
+    // Cập nhật lại số lượng câu hỏi trong matrixConfig để đồng bộ tuyệt đối khi tạo đề
+    let tn = 0, dsY = 0, tngan = 0, tl = 0;
+    newSpec.forEach(topic => {
+      topic.rows?.forEach(row => {
+        const s = row.soCau;
+        if (s) {
+          tn += (s.nhanBiet?.TN || 0) + (s.thongHieu?.TN || 0) + (s.vanDung?.TN || 0);
+          dsY += (s.nhanBiet?.DS || 0) + (s.thongHieu?.DS || 0) + (s.vanDung?.DS || 0);
+          tngan += (s.nhanBiet?.TNgan || 0) + (s.thongHieu?.TNgan || 0) + (s.vanDung?.TNgan || 0);
+          tl += (s.nhanBiet?.TL || 0) + (s.thongHieu?.TL || 0) + (s.vanDung?.TL || 0);
+        }
+      });
+    });
+
+    const soY = matrixConfig.soYTrongCauDungSai || 4;
+    const soCauDS = soY > 0 ? Math.round(dsY / soY) : 0;
+
+    setMatrixConfig(prev => ({
+      ...prev,
+      soCauNhieuLuaChon: tn,
+      soCauDungSai: soCauDS,
+      soCauTraLoiNgan: tngan,
+      soCauTuLuan: tl,
+    }));
+
     alert('Đã xác nhận Ma trận Mẫu. Dữ liệu này sẽ được dùng cho Bản Đặc Tả và Đề Kiểm Tra.');
   };
 
