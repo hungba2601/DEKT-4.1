@@ -92,6 +92,7 @@ const App: React.FC = () => {
 
   // Load saved API Key and register Quota Exceeded handler
   useEffect(() => {
+    const savedKey = localStorage.getItem('gemini_api_key');
     let savedModel = localStorage.getItem('ai_model') || 'gemini-3.6-flash';
     if (savedModel === 'gemini-3.5-flash') {
       savedModel = 'gemini-3.8-flash';
