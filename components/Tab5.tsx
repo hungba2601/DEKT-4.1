@@ -13,6 +13,8 @@ interface Tab5Props {
   setExamTemplateContent: (content: string) => void;
   sgkFileContent: string;
   matrixConfig: any; // Add matrixConfig
+  examTitle?: string;
+  schoolYear?: string;
 }
 
 // Make renderMathInElement globally available for TypeScript
@@ -31,7 +33,9 @@ const Tab5: React.FC<Tab5Props> = ({
   examTemplateContent,
   setExamTemplateContent,
   sgkFileContent,
-  matrixConfig
+  matrixConfig,
+  examTitle,
+  schoolYear
 }) => {
   const [reviewFileContent, setReviewFileContent] = useState<string>('');
   const [reviewFileStatus, setReviewFileStatus] = useState<'idle' | 'parsing' | 'success' | 'error'>('idle');
@@ -155,7 +159,9 @@ const Tab5: React.FC<Tab5Props> = ({
         examTemplateContent,
         1,
         2,
-        matrixConfig?.soYTrongCauDungSai || 4
+        matrixConfig?.soYTrongCauDungSai || 4,
+        examTitle,
+        schoolYear
       );
 
       clearInterval(progressInterval);
@@ -205,7 +211,9 @@ const Tab5: React.FC<Tab5Props> = ({
         examTemplateContent,
         3,
         1,
-        matrixConfig?.soYTrongCauDungSai || 4
+        matrixConfig?.soYTrongCauDungSai || 4,
+        examTitle,
+        schoolYear
       );
 
       clearInterval(progressInterval);

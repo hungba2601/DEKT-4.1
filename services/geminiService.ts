@@ -3,9 +3,9 @@ import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import type { MatrixConfig, SpecData } from '../types';
 
 let userApiKey: string | null = null;
-let currentAiModel: string = 'gemini-2.5-flash';
+let currentAiModel: string = 'gemini-3.6-flash';
 
-export const setGeminiConfig = (key: string, model: string = 'gemini-2.5-flash') => {
+export const setGeminiConfig = (key: string, model: string = 'gemini-3.6-flash') => {
   userApiKey = key;
   currentAiModel = model;
 };
@@ -223,18 +223,58 @@ const callWithRetry = async <T>(
 };
 // ------------------------------
 
+/**
+ * Nhận diện và trích xuất chữ từ file ảnh (OCR) sử dụng Gemini Multimodal
+ */
+export const ocrImage = async (base64Data: string, mimeType: string, fileName?: string): Promise<string> => {
+  const model = currentAiModel;
+  const prompt = `Bạn là chuyên gia số hóa tài liệu giáo dục. Hãy đọc và trích xuất TOÀN BỘ nội dung văn bản, bảng biểu, đề mục và nội dung bài học trong hình ảnh trang sách giáo khoa này một cách chi tiết, chính xác 100%.
+- Giữ nguyên cấu trúc các mục, tiêu đề, đoạn văn.
+- Đối với công thức toán/lý/hóa, sử dụng cú pháp LaTeX ($...$ cho nội dòng, $$...$$ cho công thức khối).
+- Tuyệt đối không thêm lời bình luận, lời chào hay giải thích nào khác. Chỉ trả về nội dung đã trích xuất.`;
+
+  const response = await callWithRetry<GenerateContentResponse>(() => 
+    getAiClient().models.generateContent({
+      model,
+      contents: [
+        {
+          inlineData: {
+            mimeType: mimeType || 'image/jpeg',
+            data: base64Data,
+          },
+        },
+        {
+          text: prompt,
+        },
+      ],
+    })
+  );
+
+  const text = response.text || "";
+  return text.trim();
+};
+
 export const generateMatrixAndSpec = async (
   sgkFileContent: string,
   curriculumFileContent: string,
   config: MatrixConfig,
-  examTitle: string
+  examTitle: string,
+  schoolYear?: string
 ): Promise<{ matrix: string; spec: SpecData }> => {
   const model = currentAiModel;
   const sgkText = fileToText(sgkFileContent, "Sách giáo khoa (Toàn bộ nội dung)");
   const curriculumText = fileToText(curriculumFileContent, "Phân phối chương trình");
-  const finalExamTitle = examTitle ? ` ${examTitle.toUpperCase()}` : '';
+  const titleParts = [examTitle ? examTitle.toUpperCase() : '', schoolYear ? `NĂM HỌC ${schoolYear}` : ''].filter(Boolean);
+  const finalExamTitle = titleParts.length > 0 ? ` ${titleParts.join(' - ')}` : '';
 
   let configRules = '';
+
+  // Tính phân bổ ý ĐS theo mức độ: Biết ưu tiên 2, phần còn lại san đều Hiểu và VD
+  const soY = config.soYTrongCauDungSai;
+  const dsBiet = Math.min(2, soY); // Biết ưu tiên 2 ý, hoặc tất cả nếu tổng < 2
+  const dsConLai = soY - dsBiet;
+  const dsHieu = Math.ceil(dsConLai / 2); // Hiểu lấy nửa trên
+  const dsVanDung = dsConLai - dsHieu; // VD lấy phần còn lại
 
   if (config.isTuLuan100) {
     const totalQuestions = config.soCauTuLuan;
@@ -269,7 +309,8 @@ export const generateMatrixAndSpec = async (
         - **${config.soCauDungSai} câu trắc nghiệm Đúng-Sai.**
         - **${config.soCauTraLoiNgan} câu trắc nghiệm Trả lời ngắn.**
         - **${config.soCauTuLuan} câu Tự luận.**
-    - **CẤU TRÚC CÂU ĐÚNG-SAI:** Mỗi câu hỏi Đúng-Sai lớn phải bao gồm chính xác **${config.soYTrongCauDungSai} câu phát biểu nhỏ**.
+    - **CẤU TRÚC CÂU ĐÚNG-SAI:** Mỗi câu hỏi Đúng-Sai lớn phải bao gồm chính xác **${soY} câu phát biểu nhỏ (ý)**.
+    - **PHÂN BỔ Ý ĐÚNG-SAI THEO MỨC ĐỘ (BẮT BUỘC):** Mỗi câu Đúng-Sai có ${soY} ý phải được phân bổ vào các mức độ nhận thức như sau: **Nhận biết = ${dsBiet} ý, Thông hiểu = ${dsHieu} ý, Vận dụng = ${dsVanDung} ý**. Trong JSON đầu ra, trường "DS" trong mỗi mức độ phải ghi SỐ Ý (không phải số câu). Ví dụ: nếu bài X có 1 câu Đúng-Sai, thì soCau phải là: nhanBiet.DS = ${dsBiet}, thongHieu.DS = ${dsHieu}, vanDung.DS = ${dsVanDung}.
     - **PHÂN BỔ TỶ LỆ ĐIỂM (BẮT BUỘC TUYỆT ĐỐI - KHÔNG ĐƯỢC SAI LỆCH):**
         - Tỷ lệ điểm Trắc nghiệm / Tự luận: Chính xác ${config.tracNghiem}% / ${config.tuLuan}% (Tương đương ${tongDiemTracNghiem.toFixed(2)}đ / ${tongDiemTuLuan.toFixed(2)}đ)
         - Tỷ lệ điểm theo mức độ nhận thức:
@@ -293,9 +334,11 @@ export const generateMatrixAndSpec = async (
       `;
   }
 
-  const totalQuestionsString = config.isTuLuan100 ?
-    `(${config.soCauTuLuan} - 10.0)` :
-    `(${config.soCauNhieuLuaChon + config.soCauDungSai + config.soCauTraLoiNgan + config.soCauTuLuan} - 10.0)`;
+  const soCauTNKQ_va_TL = config.isTuLuan100 ?
+    `${config.soCauTuLuan} câu` :
+    `${config.soCauNhieuLuaChon + config.soCauTraLoiNgan + config.soCauTuLuan} câu, ${config.soCauDungSai * config.soYTrongCauDungSai} ý`;
+
+  const totalQuestionsString = `(${soCauTNKQ_va_TL} - 10.0)`;
 
 
   const prompt = `
@@ -335,7 +378,31 @@ export const generateMatrixAndSpec = async (
     -   **Body (tbody):**
         -   Mỗi **Chủ đề** xác định từ "File Phân phối chương trình" PHẢI bắt đầu bằng một hàng tiêu đề riêng, trong đó cột TT chứa số thứ tự La Mã, và một ô duy nhất sẽ gộp 17 cột còn lại để hiển thị tên chủ đề (ví dụ: <tr style="font-weight: bold; background-color: #f2f2f2;"><td>I</td><td colspan="17" style="text-align: left;">Tên Chủ đề 1...</td></tr>).
         -   Mỗi **Nội dung/đơn vị kiến thức** (tức là MỖI BÀI HỌC) PHẢI nằm trên một hàng '<tr>' riêng biệt và KHÔNG có cột "Chủ đề".
-        -   Trong các ô có câu hỏi, bạn PHẢI điền cả **số lượng câu hỏi và tổng điểm tương ứng** theo định dạng '(Số câu - Tổng điểm)'. Ví dụ: '(1 - 0.25)', '(2 - 1.0)'. Điểm phải có một hoặc hai chữ số thập phân nếu cần. Nếu không có câu hỏi, để trống ô.
+        -   Trong các ô có câu hỏi ở phần Body, bạn PHẢI điền số lượng câu hỏi, số thứ tự câu hỏi và tổng điểm. 
+            + **QUY TẮC ĐÁNH SỐ THỨ TỰ (BẮT BUỘC):** 
+              * **Nhiều lựa chọn:** Đánh số liên tục THEO TỪNG BÀI HỌC (từ trái qua phải: Biết -> Hiểu -> Vận dụng). Hết Bài 1 mới đánh số tiếp cho Bài 2. (VD: Bài 1 Biết C1,2, Hiểu C3. Bài 2 Biết C4,5...). Nếu ô có nhiều câu, chỉ ghi chữ 'C' ở đầu, sau đó phẩy số (VD: C1,2,3).
+              * **Đúng - Sai:** Mỗi câu ĐS đánh số từ 1, 2... Các ý bên trong đánh a, b, c, d. VD: Câu 1 có 4 ý là 1a, 1b, 1c, 1d. Cũng đánh số liên tục theo từng bài.
+              * **Trả lời ngắn:** Đánh số độc lập, bắt đầu lại từ đầu là C1, 2, 3... Đánh liên tục theo từng bài.
+              * **Tự luận:** Đánh số độc lập, bắt đầu lại từ đầu là C1, 2, 3... Đánh liên tục theo từng bài.
+            + **ĐỊNH DẠNG Ô CÂU HỎI (BẮT BUỘC):** \`Số lượng (Các số thứ tự câu) <br/> (Điểm)\`
+              * Ví dụ Nhiều lựa chọn: \`2 (C1,2) <br/> (0.5đ)\`
+              * Ví dụ Đúng - Sai: \`2 (1a,1b) <br/> (0.5đ)\`
+              * Ví dụ Tự luận: \`1 (C1) <br/> (2.0đ)\`
+            + Nếu ô không có câu hỏi, để trống hoàn toàn.
+
+    --- QUY TẮC ĐỊNH DẠNG 3 CỘT "TỔNG" (Biết, Hiểu, Vận dụng) Ở CẢ BODY VÀ FOOTER (CỰC KỲ QUAN TRỌNG) ---
+    - **TUYỆT ĐỐI CẤM:** Không được cộng gộp số câu với số ý thành một con số duy nhất (Ví dụ SAI: (5 - 1.25), (16 - 4.0), (7 - 3.0), (21 - 10.0)).
+    - **BẮT BUỘC PHẢI GHI CỤ THỂ, TÁCH BIỆT SỐ CÂU VÀ SỐ Ý:**
+      * Nếu trong mức độ đó CHỈ CÓ CÂU (TN, Trả lời ngắn, Tự luận): Ghi \`(X câu - Điểm)\` hoặc \`(X - Điểm)\` (Ví dụ: \`(3 câu - 0.75)\` hoặc \`(1 câu - 1.5)\`).
+      * Nếu trong mức độ đó CHỈ CÓ Ý (Đúng - Sai): Ghi \`(Y ý - Điểm)\` (Ví dụ: \`(2 ý - 0.5)\` hoặc \`(1 ý - 0.25)\`).
+      * **NẾU TRONG MỨC ĐỘ ĐÓ CÓ CẢ CÂU VÀ Ý: BẮT BUỘC GHI RÕ TÁCH BIỆT:** \`(X câu, Y ý - Điểm)\`
+        - Ví dụ ở hàng 1 mức Biết: có 3 câu TN và 2 ý ĐS -> Ghi: \`(3 câu, 2 ý - 1.25)\`.
+        - Ví dụ ở hàng 1 mức Hiểu: có 1 câu TN và 1 ý ĐS -> Ghi: \`(1 câu, 1 ý - 0.5)\`.
+        - Ví dụ ở hàng 1 mức Vận dụng: có 1 ý ĐS -> Ghi: \`(1 ý - 0.25)\`.
+        - Ví dụ ở Footer cột Tổng Biết: có 10 câu TN và 6 ý ĐS -> Ghi: \`(10 câu, 6 ý - 4.0)\`.
+        - Ví dụ ở Footer cột Tổng Hiểu: có 3 câu TN, 1 câu TL và 3 ý ĐS (tổng 4 câu, 3 ý) -> Ghi: \`(4 câu, 3 ý - 3.0)\`.
+        - Ví dụ ở Footer cột Tổng Vận dụng: có 3 câu TN, 1 câu TL và 3 ý ĐS (tổng 4 câu, 3 ý) -> Ghi: \`(4 câu, 3 ý - 3.0)\`.
+        - Ô Tổng cuối cùng (góc phải dưới cùng của Footer): Ghi \`(${soCauTNKQ_va_TL} - 10.0)\`.
 
     --- MẪU HTML MA TRẬN BẮT BUỘC ---
     \`\`\`html
@@ -382,26 +449,26 @@ export const generateMatrixAndSpec = async (
             <tr>
                 <td>1</td>
                 <td style="text-align: left;">Tên bài học 1.1...</td>
-                <!-- Dữ liệu (Số câu - Tổng điểm) cho từng ô -->
-                <td>(1 - 0.25)</td><td></td><td></td> <!-- NL -->
-                <td></td><td>(1 - 1.0)</td><td></td> <!-- ĐS -->
-                <td>(1 - 0.25)</td><td></td><td></td> <!-- Trả lời ngắn -->
-                <td></td><td></td><td>(1 - 2.0)</td> <!-- TL -->
-                <!-- Tổng theo mức độ cho hàng này -->
-                <td>(2 - 0.5)</td><td>(1 - 1.0)</td><td>(1 - 2.0)</td>
-                <td>35</td> <!-- Tỉ lệ % -->
+                <!-- Dữ liệu cho từng ô -->
+                <td>3 (C1,2,3)<br/>(0.75đ)</td><td>1 (C4)<br/>(0.25đ)</td><td></td> <!-- NL -->
+                <td>2 (1a,1b)<br/>(0.5đ)</td><td>1 (1c)<br/>(0.25đ)</td><td>1 (1d)<br/>(0.25đ)</td> <!-- ĐS -->
+                <td></td><td></td><td></td> <!-- Trả lời ngắn -->
+                <td></td><td></td><td></td> <!-- TL -->
+                <!-- Tổng theo mức độ cho hàng này (GHI CỤ THỂ SỐ CÂU VÀ SỐ Ý, KHÔNG GỘP CHUNG) -->
+                <td>(3 câu, 2 ý - 1.25)</td><td>(1 câu, 1 ý - 0.5)</td><td>(1 ý - 0.25)</td>
+                <td>20</td> <!-- Tỉ lệ % -->
             </tr>
         </tbody>
         <tfoot>
             <tr style="font-weight: bold;">
-                <td colspan="2">Tổng (Số câu - Điểm)</td>
-                <td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td>
-                <td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td>
-                <td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td>
-                <td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td><td>(Tổng - Điểm)</td>
-                <td>(Tổng Biết - Điểm)</td>
-                <td>(Tổng Hiểu - Điểm)</td>
-                <td>(Tổng Vận dụng - Điểm)</td>
+                <td colspan="2">Tổng (Số câu, ý - Điểm)</td>
+                <td>(10 - 2.5)</td><td>(3 - 0.75)</td><td>(3 - 0.75)</td>
+                <td>(6 ý - 1.5)</td><td>(3 ý - 0.75)</td><td>(3 ý - 0.75)</td>
+                <td>(0 - 0)</td><td>(0 - 0)</td><td>(0 - 0)</td>
+                <td>(0 - 0)</td><td>(1 - 1.5)</td><td>(1 - 1.5)</td>
+                <td>(10 câu, 6 ý - 4.0)</td>
+                <td>(4 câu, 3 ý - 3.0)</td>
+                <td>(4 câu, 3 ý - 3.0)</td>
                 <td>${totalQuestionsString}</td>
             </tr>
             <tr style="font-weight: bold;">
@@ -435,6 +502,10 @@ export const generateMatrixAndSpec = async (
                 "vanDung": {"TN": 0, "DS": 0, "TNgan": 0, "TL": 0},
                 "vanDungCao": {"TN": 0, "DS": 0, "TNgan": 0, "TL": 0}
               }
+              // LƯU Ý QUAN TRỌNG VỀ TRƯỜNG DS:
+              // DS = SỐ Ý (không phải số câu hỏi).
+              // Ví dụ: Bài có 1 câu Đúng-Sai (${soY} ý) -> nhanBiet.DS=${dsBiet}, thongHieu.DS=${dsHieu}, vanDung.DS=${dsVanDung}
+              // Các trường TN, TNgan, TL vẫn là số CÂU như bình thường.
             }
           ]
         }
@@ -627,7 +698,9 @@ const generateSingleExam = async (
   sgkText: string,
   similarityPercentage: number,
   examTemplateContent?: string,
-  soYTrongCauDungSai: number = 4
+  soYTrongCauDungSai: number = 4,
+  examTitle?: string,
+  schoolYear?: string
 ): Promise<string> => {
   const model = currentAiModel;
 
@@ -639,12 +712,17 @@ const generateSingleExam = async (
     `;
 
   let formatInstruction = '';
+  const titleHeader = [
+    examTitle ? `ĐỀ KIỂM TRA ${examTitle.toUpperCase()}` : 'ĐỀ KIỂM TRA',
+    schoolYear ? `NĂM HỌC ${schoolYear}` : ''
+  ].filter(Boolean).join(' - ');
+
   if (examTemplateContent) {
     formatInstruction = `
             --- QUY TẮC ĐỊNH DẠNG (CỰC KỲ QUAN TRỌNG) ---
             1.  **SỬ DỤNG MẪU HTML:** Bạn PHẢI sử dụng đoạn mã HTML trong "FILE MẪU (HTML)" dưới đây làm khuôn mẫu TUYỆT ĐỐI cho đề thi này.
             2.  **BẢO TOÀN CẤU TRÚC:** Đầu ra của bạn phải là một chuỗi HTML hoàn chỉnh. TUYỆT ĐỐI không được thay đổi cấu trúc, các thẻ HTML (<table>, <div>, <p>, <span>), các class, hoặc style inline của file mẫu. Hãy giữ nguyên định dạng y hệt.
-            3.  **THAY THẾ NỘI DUNG:** Tìm các vị trí giữ chỗ (placeholders) trong file mẫu và thay thế chúng bằng câu hỏi và đáp án tương ứng.
+            3.  **THAY THẾ NỘI DUNG:** Tìm các vị trí giữ chỗ (placeholders) trong file mẫu và thay thế chúng bằng câu hỏi và đáp án tương ứng. Cập nhật đúng Tiêu đề kỳ kiểm tra (${examTitle || ''}), Năm học (${schoolYear || ''}) và Đề số (${index}) vào phần thông tin đầu trang.
             
             --- FILE MẪU (HTML) ---
             ${examTemplateContent}
@@ -653,7 +731,7 @@ const generateSingleExam = async (
     formatInstruction = `
             --- QUY TẮC ĐỊNH DẠNG ---
             Định dạng đầu ra phải là HTML.
-            -   Đề thi phải có tiêu đề rõ ràng (ví dụ: "ĐỀ SỐ ${index}").
+            -   Đề thi phải có tiêu đề rõ ràng ở đầu trang (ví dụ: "${titleHeader} - ĐỀ SỐ ${index}").
             -   Chia rõ các phần chi tiết (nếu có trong ma trận), BẮT BUỘC ghi rõ tiêu đề mỗi phần kèm theo "(Số câu hỏi - Tổng điểm)". Ví dụ cấu trúc chuẩn:
                 + "PHẦN I: TRẮC NGHIỆM NHIỀU PHƯƠNG ÁN LỰA CHỌN (... câu - ... điểm)"
                 + "PHẦN II: TRẮC NGHIỆM ĐÚNG SAI (... câu - ... điểm)"
@@ -684,6 +762,11 @@ const generateSingleExam = async (
         8.  **ĐỊNH DẠNG BẢNG ĐÁP ÁN:** Dùng bảng NGANG cho đáp án trắc nghiệm ở cuối đề.
         9.  **ĐỊNH DẠNG TABLE CHO ĐÁP ÁN:** BẮT BUỘC dùng HTML TABLE không viền (border="0") để trình bày 4 phương án A, B, C, D theo cấu trúc **2 dòng 2 cột** (A và B ở dòng trên, C và D ở dòng dưới). TUYỆT ĐỐI KHÔNG dàn hàng ngang 4 cột. Cấu trúc HTML BẮT BUỘC: \`<table style="width:100%; border:none; table-layout:fixed;"><tr><td style="border:none; width:50%;">A. ...</td><td style="border:none; width:50%;">B. ...</td></tr><tr><td style="border:none; width:50%;">C. ...</td><td style="border:none; width:50%;">D. ...</td></tr></table>\`. Phải chia đều 50% khoảng cách 2 cột.
         10. **KIỂM TRA TỶ LỆ:** Trước khi xuất kết quả, hãy tự đếm lại bảng đáp án. Nếu có quá nhiều đáp án giống nhau nằm liên tiếp hoặc một chữ cái xuất hiện quá nhiều, hãy hoán vị lại phương án của các câu hỏi đó.
+        11. **ĐÁNH SỐ THỨ TỰ CÂU HỎI (BẮT BUỘC):** Đánh số thứ tự các câu hỏi trong đề thi PHẢI KHỚP TUYỆT ĐỐI với số thứ tự được đánh trong MA TRẬN. Cụ thể:
+            - Trắc nghiệm Nhiều lựa chọn: Đánh số liên tục Câu 1, Câu 2, Câu 3... từ đầu đến cuối phần này.
+            - Trắc nghiệm Đúng - Sai: Đánh số liên tục Câu 1, Câu 2, Câu 3... cho các câu lớn (bên trong là các ý a, b, c, d). Đánh số độc lập bắt đầu từ 1 đối với phần này.
+            - Trắc nghiệm Trả lời ngắn: Đánh số ĐỘC LẬP, BẮT ĐẦU LẠI TỪ CÂU 1 (Câu 1, Câu 2, Câu 3...).
+            - Tự luận: Đánh số ĐỘC LẬP, BẮT ĐẦU LẠI TỪ CÂU 1 (Câu 1, Câu 2, Câu 3...).
 
         ${formatInstruction}
 
@@ -724,7 +807,9 @@ export const generateExams = async (
   examTemplateContent?: string,
   startIndex: number = 1,
   count: number = 3,
-  soYTrongCauDungSai: number = 4
+  soYTrongCauDungSai: number = 4,
+  examTitle?: string,
+  schoolYear?: string
 ): Promise<string[]> => {
   const reviewText = fileToText(reviewFileContent, "Ngân hàng câu hỏi ôn tập");
   const matrixText = `--- BẮT ĐẦU MA TRẬN ---\n${matrix}\n--- KẾT THÚC MA TRẬN ---`;
@@ -737,7 +822,7 @@ export const generateExams = async (
   try {
     for (const i of indices) {
       console.log(`Đang tạo đề thi số ${i}...`);
-      const exam = await generateSingleExam(i, reviewText, matrixText, "", similarityPercentage, examTemplateContent, soYTrongCauDungSai);
+      const exam = await generateSingleExam(i, reviewText, matrixText, "", similarityPercentage, examTemplateContent, soYTrongCauDungSai, examTitle, schoolYear);
       exams.push(exam);
       console.log(`Đã hoàn thành đề thi số ${i}.`);
       // Delay 2 giây giữa các lần gọi để tránh rate limit (429)

@@ -85,7 +85,7 @@ const App: React.FC = () => {
 
   // API Key State
   const [apiKey, setApiKey] = useState<string>('');
-  const [aiModel, setAiModel] = useState<string>('gemini-2.5-flash');
+  const [aiModel, setAiModel] = useState<string>('gemini-3.6-flash');
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState<boolean>(false);
   const [isQuotaExceeded, setIsQuotaExceeded] = useState<boolean>(false);
   const quotaExceededResolvers = useRef<((key: string) => void)[]>([]);
@@ -93,7 +93,7 @@ const App: React.FC = () => {
   // Load saved API Key and register Quota Exceeded handler
   useEffect(() => {
     const savedKey = localStorage.getItem('gemini_api_key');
-    const savedModel = localStorage.getItem('ai_model') || 'gemini-2.5-flash';
+    const savedModel = localStorage.getItem('ai_model') || 'gemini-3.6-flash';
     if (savedKey) {
       setApiKey(savedKey);
       setAiModel(savedModel);
@@ -278,6 +278,7 @@ const App: React.FC = () => {
 
   // State from Tab 1
   const [examTitle, setExamTitle] = useState<string>('');
+  const [schoolYear, setSchoolYear] = useState<string>('');
   const [sgkFileContent, setSgkFileContent] = useState<string>('');
   const [curriculumFileContent, setCurriculumFileContent] = useState<string>('');
   const [matrixConfig, setMatrixConfig] = useState<MatrixConfig>({
@@ -358,6 +359,8 @@ const App: React.FC = () => {
           <Tab1
             examTitle={examTitle}
             setExamTitle={setExamTitle}
+            schoolYear={schoolYear}
+            setSchoolYear={setSchoolYear}
             setMatrixConfig={setMatrixConfig}
             matrixConfig={matrixConfig}
             setIsLoading={setIsLoading}
@@ -380,12 +383,13 @@ const App: React.FC = () => {
             matrixConfig={matrixConfig}
             onConfirm={handleManualMatrixConfirm}
             examTitle={examTitle}
+            schoolYear={schoolYear}
             savedSpec={manualSpecStore}
             onSaveSpec={setManualSpecStore}
           />
         );
       case 'tab4':
-        return <Tab3 generatedSpec={generatedSpec} setGeneratedSpec={setGeneratedSpec} examTitle={examTitle} matrixConfig={matrixConfig} />;
+        return <Tab3 generatedSpec={generatedSpec} setGeneratedSpec={setGeneratedSpec} examTitle={examTitle} schoolYear={schoolYear} matrixConfig={matrixConfig} />;
       case 'tab5':
         return (
           <Tab4
@@ -412,6 +416,8 @@ const App: React.FC = () => {
             setExamTemplateContent={setExamTemplateContent}
             sgkFileContent={sgkFileContent}
             matrixConfig={matrixConfig}
+            examTitle={examTitle}
+            schoolYear={schoolYear}
           />
         );
       case 'tab7':
@@ -446,7 +452,7 @@ const App: React.FC = () => {
         <div className="w-full max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="py-4 flex items-center justify-between">
             <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-red-600 dark:text-red-500">
-              APP TẠO ĐỀ KIỂM TRA + MA TRẬN ĐẶC TẢ CV 7991 (AI) VER 3.1
+              APP TẠO ĐỀ KIỂM TRA + MA TRẬN ĐẶC TẢ CV 7991 (AI) VER 4.1
             </h1>
             <div className="flex items-center gap-4">
               <ThemeSwitcher theme={theme} toggleTheme={toggleTheme} />
