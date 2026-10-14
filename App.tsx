@@ -92,12 +92,17 @@ const App: React.FC = () => {
 
   // Load saved API Key and register Quota Exceeded handler
   useEffect(() => {
-    const savedKey = localStorage.getItem('gemini_api_key');
-    const savedModel = localStorage.getItem('ai_model') || 'gemini-3.6-flash';
+    let savedModel = localStorage.getItem('ai_model') || 'gemini-3.6-flash';
+    if (savedModel === 'gemini-3.5-flash') {
+      savedModel = 'gemini-3.8-flash';
+      localStorage.setItem('ai_model', 'gemini-3.8-flash');
+    }
     if (savedKey) {
       setApiKey(savedKey);
       setAiModel(savedModel);
       setGeminiConfig(savedKey, savedModel);
+    } else {
+      setAiModel(savedModel);
     }
 
     // Đăng ký cơ chế tạm dừng khi hết hạn mức API
@@ -176,7 +181,7 @@ const App: React.FC = () => {
   }, []);
 
   const handleLogin = async (email: string, password?: string) => {
-    if (SCRIPT_URL === 'DÁN_URL_WEB_APP_G_SCRIPT_VÀO_ĐÂY') {
+    if ((SCRIPT_URL as string) === 'DÁN_URL_WEB_APP_G_SCRIPT_VÀO_ĐÂY') {
       alert("Bạn chưa cấu hình SCRIPT_URL trong App.tsx. Hãy dán URL từ Google Apps Script vào.");
       return;
     }

@@ -590,7 +590,8 @@ export const generateReviewQuestions = async (
   sgkFileContent: string,
   matrix: string,
   spec: SpecData,
-  config: MatrixConfig
+  config: MatrixConfig,
+  customPrompt?: string
 ): Promise<string> => {
   const model = currentAiModel;
   const sgkText = fileToText(sgkFileContent, "Sách giáo khoa");
@@ -608,6 +609,18 @@ export const generateReviewQuestions = async (
     exampleAnswers += `<p>${alphabet[i]} - ${randomAnswer}</p>`;
   }
 
+  let customInstruction = '';
+  if (customPrompt && customPrompt.trim()) {
+    customInstruction = `
+        --- YÊU CẦU ĐẶC BIỆT TỪ GIÁO VIÊN / NGƯỜI DÙNG KHI SOẠN CÂU HỎI (BẮT BUỘC ƯU TIÊN CAO NHẤT) ---
+        ${customPrompt.trim()}
+        
+        **HƯỚNG DẪN XỬ LÝ YÊU CẦU ĐẶC BIỆT:**
+        - Bạn PHẢI tuân thủ nghiêm ngặt mọi chỉ dẫn về cấu trúc, kiểu câu hỏi, số lượng ý nhỏ trong mỗi câu, phong cách nội dung hoặc định dạng đáp án (ví dụ: câu hỏi ngắn gồm 4 ý nhỏ, đáp án là các con số, gắn liền tình huống thực tế,...) được giáo viên đưa ra ở trên.
+        - Mọi quy tắc định dạng chung nếu có xung đột với yêu cầu đặc biệt này thì phải ưu tiên thực hiện đúng theo yêu cầu của giáo viên.
+    `;
+  }
+
   const prompt = `
         Bạn là một AI chuyên tạo câu hỏi ôn tập cho giáo viên.
         
@@ -618,7 +631,7 @@ export const generateReviewQuestions = async (
 
         --- YÊU CẦU ---
         Dựa vào TOÀN BỘ các nguồn dữ liệu, hãy tạo ra một bộ **CÂU HỎI ÔN TẬP** đầy đủ và chi tiết. **ƯU TIÊN TUYỆT ĐỐI** thông tin từ **BẢN ĐẶC TẢ** để xác định số lượng, hình thức, và mức độ nhận thức cho từng nội dung.
-        
+        ${customInstruction}
         --- QUY TẮC CHUNG TẠO CÂU HỎI (RẤT QUAN TRỌNG) ---
         1.  **Bám sát Đặc tả và Ma trận:** Tạo câu hỏi cho TẤT CẢ các nội dung/chủ đề được liệt kê trong bản đặc tả và ma trận. "Yêu cầu cần đạt" trong bản đặc tả là kim chỉ nam cho nội dung câu hỏi.
         2.  **Số lượng (CỰC KỲ QUAN TRỌNG):** Tạo ra số lượng câu hỏi CHÍNH XÁC GẤP 2.5 LẦN so với yêu cầu trong cột "soCau" của bản đặc tả cho mỗi loại. Ví dụ: nếu bản đặc tả yêu cầu 4 câu trắc nghiệm mức độ Nhận biết, bạn phải tạo ra chính xác 4 * 2.5 = 10 câu. Nếu kết quả phép nhân không phải là số nguyên (ví dụ: 1 * 2.5 = 2.5), hãy làm tròn lên thành số nguyên tiếp theo (tức là 3 câu). Đây là yêu cầu bắt buộc và phải được tuân thủ nghiêm ngặt.
