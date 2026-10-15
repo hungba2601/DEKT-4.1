@@ -4,9 +4,9 @@ import type { MatrixConfig, SpecData } from '../types';
 import { validateAndNormalizeSpec, generateHtmlFromSpec } from '../utils/matrixCalculator';
 
 let userApiKey: string | null = null;
-let currentAiModel: string = 'gemini-3.6-flash';
+let currentAiModel: string = 'gemini-3-flash-preview';
 
-export const setGeminiConfig = (key: string, model: string = 'gemini-3.6-flash') => {
+export const setGeminiConfig = (key: string, model: string = 'gemini-3-flash-preview') => {
   userApiKey = key;
   currentAiModel = model;
 };
