@@ -64,6 +64,7 @@ export const GEMINI_MODELS = [
   { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Thế hệ mới - Suy luận tốt & Ổn định)', description: 'Mô hình thế hệ mới cân bằng tốc độ, suy luận logic cao và ổn định' },
   { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Tốc độ cao & Phản hồi tức thì)', description: 'Tốc độ cao & Phản hồi tức thì' },
   { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash (Khuyên dùng - Chuẩn tối ưu & Ổn định)', description: 'Mặc định - Cân bằng hoàn hảo giữa tốc độ & chất lượng', isDefault: true },
-  { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash (Mới nhất - Suy luận nâng cao & Sáng tạo)', description: 'Mới nhất - Suy luận nâng cao & Sáng tạo' }
+  { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash (Mới nhất - Suy luận nâng cao & Sáng tạo)', description: 'Mới nhất - Suy luận nâng cao & Sáng tạo' },
+  { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview (Thế hệ mới - Suy luận nâng cao & Tốc độ cao)', description: 'Bản thử nghiệm thế hệ Gemini 3 với khả năng suy luận vượt trội, tốc độ phản hồi nhanh chóng và tối ưu tác vụ đề thi' }
 ];
 
