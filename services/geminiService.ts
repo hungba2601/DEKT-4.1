@@ -1,11 +1,12 @@
 
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import type { MatrixConfig, SpecData } from '../types';
+import { generateMatrixHtml, calculateReviewTargetCounts, ensureSpecMatchesConfig } from '../utils/matrixCalculator';
 
 let userApiKey: string | null = null;
-let currentAiModel: string = 'gemini-3.6-flash';
+let currentAiModel: string = 'gemini-3.1-flash-lite';
 
-export const setGeminiConfig = (key: string, model: string = 'gemini-3.6-flash') => {
+export const setGeminiConfig = (key: string, model: string = 'gemini-3.1-flash-lite') => {
   userApiKey = key;
   currentAiModel = model;
 };
@@ -139,6 +140,29 @@ const extractJson = (text: string): string | null => {
   }
   
   return null;
+};
+
+/**
+ * Tự động loại bỏ các mã năng lực (Mã NL, Mã NLS, Mã AI,...) khỏi văn bản Yêu cầu cần đạt
+ */
+export const removeCompetencyCodes = (text: string): string => {
+  if (!text) return text;
+  return text
+    // 1. Dạng [Mã ...: ...] hoặc [Mã ...]
+    .replace(/\[\s*Mã[^\]]*\]/gi, '')
+    // 2. Dạng (Mã ...: ...) hoặc (Mã ...)
+    .replace(/\(\s*Mã[^)]*\)/gi, '')
+    // 3. Dạng [NLS: ...] hoặc [AI: ...] hoặc [NL: ...] hoặc [TC: ...]
+    .replace(/\[\s*(?:NLS|AI|NLa|NLb|NLc|NLd|NLe|NL|NLC|PC|TC|YCCĐ)\b[^\]]*\]/gi, '')
+    .replace(/\(\s*(?:NLS|AI|NLa|NLb|NLc|NLd|NLe|NL|NLC|PC|TC|YCCĐ)\b[^)]*\)/gi, '')
+    // 4. Các ký hiệu [NL...] hoặc (NL...)
+    .replace(/\[\s*NL\d+[^\]]*\]/gi, '')
+    .replace(/\(\s*NL\d+[^)]*\)/gi, '')
+    // Làm sạch khoảng trắng thừa
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/:\s+/g, ': ')
+    .replace(/^\s+/gm, '')
+    .trim();
 };
 
 const fileToText = (fileContent: string, fileName: string): string => {
@@ -309,14 +333,27 @@ export const generateMatrixAndSpec = async (
         - **${config.soCauDungSai} câu trắc nghiệm Đúng-Sai.**
         - **${config.soCauTraLoiNgan} câu trắc nghiệm Trả lời ngắn.**
         - **${config.soCauTuLuan} câu Tự luận.**
-    - **CẤU TRÚC CÂU ĐÚNG-SAI:** Mỗi câu hỏi Đúng-Sai lớn phải bao gồm chính xác **${soY} câu phát biểu nhỏ (ý)**.
-    - **PHÂN BỔ Ý ĐÚNG-SAI THEO MỨC ĐỘ (BẮT BUỘC):** Mỗi câu Đúng-Sai có ${soY} ý phải được phân bổ vào các mức độ nhận thức như sau: **Nhận biết = ${dsBiet} ý, Thông hiểu = ${dsHieu} ý, Vận dụng = ${dsVanDung} ý**. Trong JSON đầu ra, trường "DS" trong mỗi mức độ phải ghi SỐ Ý (không phải số câu). Ví dụ: nếu bài X có 1 câu Đúng-Sai, thì soCau phải là: nhanBiet.DS = ${dsBiet}, thongHieu.DS = ${dsHieu}, vanDung.DS = ${dsVanDung}.
+    - **CẤU TRÚC VÀ PHÂN BỔ CÂU ĐÚNG-SAI (CỰC KỲ QUAN TRỌNG - BẮT BUỘC ĐỦ CÂU):**
+        - Tổng số câu Đúng-Sai trên TOÀN BỘ bài thi PHẢI ĐỦ CHÍNH XÁC **${config.soCauDungSai} CÂU LỚN** (tương ứng **${config.soCauDungSai * config.soYTrongCauDungSai} Ý**).
+        - Mỗi câu Đúng-Sai có ${soY} ý được chia theo mức độ: **Nhận biết = ${dsBiet} ý, Thông hiểu = ${dsHieu} ý, Vận dụng = ${dsVanDung} ý**.
+        - **KHI SỐ BÀI HỌC ÍT HƠN SỐ CÂU ĐÚNG-SAI (ví dụ: chỉ có 2 bài học nhưng cấu hình yêu cầu 4 câu Đúng-Sai):** Bạn BẮT BUỘC PHẢI phân bổ nhiều hơn 1 câu Đúng-Sai vào một bài học (ví dụ: Bài 1 có 2 câu Đúng-Sai = 8 ý, Bài 2 có 2 câu Đúng-Sai = 8 ý). TUYỆT ĐỐI CẤM việc chỉ gán 1 câu mỗi bài rồi dừng lại dẫn đến thiếu câu hỏi!
+        - Nếu bài học có k câu Đúng-Sai (k = 1, 2, 3...), thì số ý tương ứng ghi vào JSON:
+            + nhanBiet.DS = k * ${dsBiet} ý
+            + thongHieu.DS = k * ${dsHieu} ý
+            + vanDung.DS = k * ${dsVanDung} ý
+          (Ví dụ: nếu bài có 2 câu Đúng-Sai thì ghi: nhanBiet.DS = ${dsBiet * 2}, thongHieu.DS = ${dsHieu * 2}, vanDung.DS = ${dsVanDung * 2}).
     - **PHÂN BỔ TỶ LỆ ĐIỂM (BẮT BUỘC TUYỆT ĐỐI - KHÔNG ĐƯỢC SAI LỆCH):**
         - Tỷ lệ điểm Trắc nghiệm / Tự luận: Chính xác ${config.tracNghiem}% / ${config.tuLuan}% (Tương đương ${tongDiemTracNghiem.toFixed(2)}đ / ${tongDiemTuLuan.toFixed(2)}đ)
         - Tỷ lệ điểm theo mức độ nhận thức:
             + Nhận biết: Chính xác ${config.biet}% (tương đương ${(config.biet / 100 * 10).toFixed(2)} điểm).
             + Thông hiểu: Chính xác ${config.hieu}% (tương đương ${(config.hieu / 100 * 10).toFixed(2)} điểm).
             + Vận dụng: Chính xác ${config.vanDung}% (tương đương ${(config.vanDung / 100 * 10).toFixed(2)} điểm).
+        - **KIỂM TOÁN TỔNG SỐ LƯỢNG CÂU HỎI TRONG BẢN ĐẶC TẢ SPEC (BẮT BUỘC ĐẠT ĐÚNG 100%):**
+            + Tổng các trường "TN" trên TOÀN BỘ các bài học phải cộng lại BẰNG ĐÚNG ${config.soCauNhieuLuaChon} câu.
+            + Tổng các trường "DS" (số ý) trên TOÀN BỘ các bài học phải cộng lại BẰNG ĐÚNG ${config.soCauDungSai * config.soYTrongCauDungSai} ý (tương đương ${config.soCauDungSai} câu Đúng-Sai lớn).
+            + Tổng các trường "TNgan" trên TOÀN BỘ các bài học phải cộng lại BẰNG ĐÚNG ${config.soCauTraLoiNgan} câu.
+            + Tổng các trường "TL" trên TOÀN BỘ các bài học phải cộng lại BẰNG ĐÚNG ${config.soCauTuLuan} câu.
+            + TUYỆT ĐỐI KHÔNG ĐƯỢC BỎ BỚT CÂU HỎI. Tổng điểm toàn bộ các câu hỏi trong đề phải đúng 10.0 điểm!
         - **LƯU Ý QUAN TRỌNG:** Bạn PHẢI sắp xếp số lượng câu hỏi và phân chia điểm số (0.25đ, 0.5đ, 1.0đ, 1.5đ...) vào 3 cột Nhận biết, Thông hiểu, Vận dụng sao cho tổng điểm cộng dồn ở mỗi cột đạt CHÍNH XÁC số điểm yêu cầu ở trên. Tuyệt đối không được tự ý làm tròn sai lệch (như 32.5%). Tổng % phải ĐÚNG 100% và tổng điểm phải ĐÚNG 10.0.
     `;
   }
@@ -349,13 +386,44 @@ export const generateMatrixAndSpec = async (
     1.  **FILE PHÂN PHỐI CHƯƠNG TRÌNH (DANH SÁCH BÀI HỌC BẮT BUỘC - MASTER LIST):** ${curriculumText}
     2.  **FILE SÁCH GIÁO KHOA (NGUỒN THAM KHẢO NỘI DUNG CHI TIẾT):** ${sgkText}
 
-    --- QUY TẮC KẾT HỢP (RẤT QUAN TRỌNG) ---
-    -   **NGUYÊN TẮC SỐ 1: "FILE PHÂN PHỐI CHƯƠNG TRÌNH" LÀ DANH SÁCH GỐC.** Bạn phải liệt kê và sử dụng TẤT CẢ các bài học có trong file này.
-    -   **BƯỚC 1:** Trích xuất toàn bộ danh sách bài học từ "FILE PHÂN PHỐI CHƯƠNG TRÌNH".
+    --- QUY TẮC KẾT HỢP VÀ XỬ LÝ DỮ LIỆU (CỰC KỲ QUAN TRỌNG) ---
+    -   **NGUYÊN TẮC SỐ 1: "FILE PHÂN PHỐI CHƯƠNG TRÌNH" LÀ NGUỒN GỐC DUY NHẤT VỀ CẤU TRÚC VÀ YÊU CẦU CẦN ĐẠT.** Bạn phải liệt kê và sử dụng TẤT CẢ các bài học có trong file này.
+    -   **BƯỚC 1:** Trích xuất toàn bộ danh sách bài học từ "FILE PHÂN PHỐI CHƯƠNG TRÌNH" (Tên chủ đề, tên bài học, số thứ tự).
     -   **BƯỚC 2:** Tạo khung ma trận bao gồm ĐẦY ĐỦ danh sách bài học vừa trích xuất. KHÔNG ĐƯỢC BỎ SÓT BẤT KỲ BÀI NÀO.
-    -   **BƯỚC 3:** Tra cứu nội dung từng bài trong "FILE SÁCH GIÁO KHOA" để điền nội dung và yêu cầu cần đạt.
+    -   **BƯỚC 3 (ĐẶC BIỆT BẮT BUỘC - QUY TẮC VỀ YÊU CẦU CẦN ĐẠT - YCCĐ):**
+        + Trong bảng đặc tả (trường "yeuCauCanDat"), bạn **BẮT BUỘC PHẢI LẤY NỘI DUNG YÊU CẦU CẦN ĐẠT (YCCĐ) TỪ FILE PHÂN PHỐI CHƯƠNG TRÌNH (PPCT)** mà người dùng đã tải lên.
+        + **QUY TẮC CỰC KỲ QUAN TRỌNG: BỎ TOÀN BỘ PHẦN MÃ NĂNG LỰC (MÃ NL, MÃ NLS, MÃ AI, MÃ TIÊU CHÍ):**
+          Trong file PPCT thường có các mã năng lực đi kèm câu chữ, ví dụ:
+          "[Mã NLS: 1.1.TC2a]", "[Mã AI: 9.A2.2]", "[Mã NL: ...]", "[NLS: ...]", "(NLa)", "(NLb)", "[NL1]", "[TC...]", v.v.
+          Bạn **BẮT BUỘC PHẢI LOẠI BỎ (XÓA HẲN) TẤT CẢ CÁC MÃ NĂNG LỰC NÀY** ra khỏi nội dung YCCĐ. TUYỆT ĐỐI KHÔNG để lại bất kỳ mã năng lực nào hay dấu ngoặc chứa mã năng lực trong kết quả! Chỉ giữ lại phần câu chữ nội dung yêu cầu kiến thức/kỹ năng thực tế.
+          *Ví dụ chuyển đổi:*
+          - Gốc trong PPCT: "[Mã NLS: 1.1.TC2a] Minh họa được nhu cầu thông tin trong các bài toán thực tiễn."
+            -> Bạn chuyển thành: "Minh họa được nhu cầu thông tin trong các bài toán thực tiễn."
+          - Gốc trong PPCT: "[Mã AI: 9.A2.2] Trình bày được ý kiến cá nhân về các thách thức an toàn số và quyền riêng tư trong kỷ nguyên AI."
+            -> Bạn chuyển thành: "Trình bày được ý kiến cá nhân về các thách thức an toàn số và quyền riêng tư trong kỷ nguyên AI."
+          - Gốc trong PPCT: "[Mã AI: 9.A2.2] Giải thích được nguyên nhân và hậu quả xã hội của hiện tượng thiên vị thuật toán."
+            -> Bạn chuyển thành: "Giải thích được nguyên nhân và hậu quả xã hội của hiện tượng thiên vị thuật toán."
+        + **TUYỆT ĐỐI KHÔNG TỰ BỊA ĐẶT**, KHÔNG tự tóm tắt làm sai lệch hoặc làm mất câu từ gốc của file PPCT (ngoài việc xóa bỏ mã năng lực).
+        + **THÊM CÁC TỪ MỨC ĐỘ NHẬN THỨC VÀO CÁC NỘI DUNG TỪ PPCT CHO PHÙ HỢP:**
+          Bạn hãy phân loại toàn bộ nội dung YCCĐ lấy từ file PPCT của bài học đó và xếp vào 3 mức độ nhận thức tương ứng:
+          * **Nhận biết:** (hoặc Biết)
+          * **Thông hiểu:**
+          * **Vận dụng:** (bao gồm cả vận dụng và vận dụng cao nếu có)
+        + **CẤU TRÚC ĐỊNH DẠNG BẮT BUỘC CHO Ô "yeuCauCanDat" (Mỗi mức độ nhận thức trên một dòng riêng, ngăn cách nhau bởi \\n):**
+          Nhận biết: [các nội dung yêu cầu thuộc mức nhận biết lấy từ PPCT, ĐÃ BỎ HẾT MÃ NL]
+          Thông hiểu: [nội dung các yêu cầu thuộc mức thông hiểu lấy từ PPCT, ĐÃ BỎ HẾT MÃ NL]
+          Vận dụng: [nội dung các yêu cầu thuộc mức vận dụng lấy từ PPCT, ĐÃ BỎ HẾT MÃ NL]
+          
+          *Ví dụ mẫu chuẩn bắt buộc:*
+          "Nhận biết: Phân biệt được thông tin và dữ liệu qua các ví dụ thực tế; Nhận biết được các dạng thông tin cơ bản bao gồm văn bản, hình ảnh, âm thanh và con số trong cuộc sống hàng ngày.\\nThông hiểu: Giải thích được mối quan hệ mật thiết giữa dữ liệu và thông tin; Nêu được ví dụ cụ thể minh họa cho tầm quan trọng của thông tin đối với việc ra quyết định và hành động của con người.\\nVận dụng: Phân tích và chỉ ra được các loại dữ liệu cần thiết để giải quyết một tình huống đơn giản trong học tập hoặc đời sống."
 
-    **CẢNH BÁO:** TUYỆT ĐỐI KHÔNG được tự "bịa" ra tên chủ đề/bài học. Mọi cấu trúc phải bám sát 100% vào file Phân phối chương trình.
+        + *LƯU Ý KHI PHÂN LOẠI NỘI DUNG TỪ PPCT:*
+          - Nếu file PPCT đã ghi sẵn các ý gạch đầu dòng nhưng chưa gắn nhãn mức độ, bạn hãy đọc hiểu câu chữ trong file PPCT đó để xếp từng ý vào đúng nhãn: "Nhận biết:", "Thông hiểu:", "Vận dụng:". Giữ nguyên vẹn câu chữ của từng ý từ file PPCT sau khi đã lọc bỏ mã năng lực.
+          - Nếu file PPCT đã ghi sẵn các mức độ, hãy giữ nguyên và chuẩn hóa theo định dạng trên.
+          - Nếu bài học trong PPCT không có yêu cầu ở mức độ nào thì chỉ cần liệt kê các mức độ có yêu cầu từ PPCT.
+          - Chỉ trong trường hợp hy hữu nếu file PPCT hoàn toàn không có cột/mục YCCĐ, bạn mới dùng SGK để bổ sung YCCĐ nhưng vẫn PHẢI tuân thủ chuẩn 3 mức độ "Nhận biết:", "Thông hiểu:", "Vận dụng:".
+
+    **CẢNH BÁO:** TUYỆT ĐỐI KHÔNG được tự "bịa" ra tên chủ đề/bài học hay viết sai lệch YCCĐ so với file PPCT. TUYỆT ĐỐI BỎ HẾT CÁC MÃ NĂNG LỰC (MÃ NL, MÃ NLS, MÃ AI). Mọi cấu trúc và nội dung YCCĐ phải bám sát vào file Phân phối chương trình.
 
     --- YÊU CẦU CÔNG VIỆC (TUYỆT ĐỐI KHÔNG BỎ SÓT) ---
     Dựa vào TOÀN BỘ nội dung của 2 file đã cho, hãy tạo ra một MA TRẬN ĐỀ KIỂM TRA và một BẢN ĐẶC TẢ chi tiết. 
@@ -495,7 +563,7 @@ export const generateMatrixAndSpec = async (
             {
               "tt": "1.1",
               "noiDung": "Tên bài học (Lấy 100% từ Phân phối chương trình)",
-              "yeuCauCanDat": "AI tự tạo dựa trên nội dung SGK.",
+              "yeuCauCanDat": "BẮT BUỘC lấy nội dung YCCĐ từ file PPCT tải lên, BỎ TOÀN BỘ MÃ NĂNG LỰC ([Mã NLS:...], [Mã AI:...]), phân bổ vào 3 mức độ nhận thức theo định dạng:\\nNhận biết: [nội dung từ PPCT, không chứa mã NL]\\nThông hiểu: [nội dung từ PPCT, không chứa mã NL]\\nVận dụng: [nội dung từ PPCT, không chứa mã NL]",
               "soCau": {
                 "nhanBiet": {"TN": 0, "DS": 0, "TNgan": 0, "TL": 0},
                 "thongHieu": {"TN": 0, "DS": 0, "TNgan": 0, "TL": 0},
@@ -505,6 +573,8 @@ export const generateMatrixAndSpec = async (
               // LƯU Ý QUAN TRỌNG VỀ TRƯỜNG DS:
               // DS = SỐ Ý (không phải số câu hỏi).
               // Ví dụ: Bài có 1 câu Đúng-Sai (${soY} ý) -> nhanBiet.DS=${dsBiet}, thongHieu.DS=${dsHieu}, vanDung.DS=${dsVanDung}
+              // Nếu bài có 2 câu Đúng-Sai (${soY * 2} ý) -> nhanBiet.DS=${dsBiet * 2}, thongHieu.DS=${dsHieu * 2}, vanDung.DS=${dsVanDung * 2}
+              // Tổng trường DS trên TOÀN BỘ các bài học bắt buộc phải bằng chính xác ${config.soCauDungSai * config.soYTrongCauDungSai} ý (${config.soCauDungSai} câu lớn)!
               // Các trường TN, TNgan, TL vẫn là số CÂU như bình thường.
             }
           ]
@@ -525,7 +595,7 @@ export const generateMatrixAndSpec = async (
         getAiClient().models.generateContent({
           model,
           contents: attempt === 1 ? prompt : prompt + '\n\n**LƯU Ý QUAN TRỌNG:** Phản hồi của bạn PHẢI là JSON thuần túy, hợp lệ. KHÔNG được có ký tự xuống dòng thực (literal newline) bên trong chuỗi JSON. Hãy sử dụng \\n thay cho xuống dòng trong các giá trị chuỗi. KHÔNG sử dụng markdown code block.',
-          config: { responseMimeType: "application/json" }
+          config: { responseMimeType: "application/json", maxOutputTokens: 65536 }
         })
       );
 
@@ -556,10 +626,28 @@ export const generateMatrixAndSpec = async (
         throw lastError;
       }
 
+      // Tự động làm sạch triệt để mọi mã năng lực (Mã NL, Mã NLS, Mã AI,...) trên từng dòng YCCĐ của spec
+      if (Array.isArray(parsed.spec)) {
+        parsed.spec.forEach((topic: any) => {
+          if (Array.isArray(topic.rows)) {
+            topic.rows.forEach((row: any) => {
+              if (row.yeuCauCanDat) {
+                row.yeuCauCanDat = removeCompetencyCodes(row.yeuCauCanDat);
+              }
+            });
+          }
+        });
+      }
+
       console.log('Đã parse JSON ma trận thành công.');
+      // Đảm bảo spec khớp 100% với config và tự động bù đủ câu hỏi nếu AI phân bổ thiếu
+      const balancedSpec = ensureSpecMatchesConfig(parsed.spec, config);
+      // Sinh bảng Ma trận HTML bằng CODE toán học để đảm bảo tính toán số câu, số ý và số điểm chính xác 100%
+      const computedMatrixHtml = generateMatrixHtml(balancedSpec, config, examTitle, schoolYear);
+
       return {
-        matrix: parsed.matrix,
-        spec: parsed.spec,
+        matrix: computedMatrixHtml || parsed.matrix,
+        spec: balancedSpec,
       };
 
     } catch (e: any) {
@@ -598,7 +686,10 @@ export const generateReviewQuestions = async (
   const matrixText = `--- BẮT ĐẦU MA TRẬN ---\n${matrix}\n--- KẾT THÚC MA TRẬN ---`;
   const specText = `--- BẮT ĐẦU BẢN ĐẶC TẢ ---\n${JSON.stringify(spec, null, 2)}\n--- KẾT THÚC BẢN ĐẶC TẢ ---`;
 
-  const soCauNho = config.soYTrongCauDungSai || 4;
+  // Tính toán chính xác số lượng câu hỏi mục tiêu (gấp 2.5 lần ma trận) bằng code
+  const targets = calculateReviewTargetCounts(spec, config);
+
+  const soCauNho = targets.soY || 4;
   const alphabet = 'abcdefghijklmnopqrstuvwxyz';
   let exampleStatements = '';
   let exampleAnswers = '';
@@ -622,47 +713,61 @@ export const generateReviewQuestions = async (
   }
 
   const prompt = `
-        Bạn là một AI chuyên tạo câu hỏi ôn tập cho giáo viên.
+        Bạn là một chuyên gia khảo thí và sư phạm chuyên tạo ngân hàng câu hỏi ôn tập cho giáo viên.
         
         --- NGUỒN DỮ LIỆU ---
         1.  **SÁCH GIÁO KHOA:** ${sgkText}
         2.  **MA TRẬN ĐỀ KIỂM TRA:** ${matrixText}
         3.  **BẢN ĐẶC TẢ CHI TIẾT (NGUỒN QUAN TRỌNG NHẤT):** ${specText}
 
-        --- YÊU CẦU ---
-        Dựa vào TOÀN BỘ các nguồn dữ liệu, hãy tạo ra một bộ **CÂU HỎI ÔN TẬP** đầy đủ và chi tiết. **ƯU TIÊN TUYỆT ĐỐI** thông tin từ **BẢN ĐẶC TẢ** để xác định số lượng, hình thức, và mức độ nhận thức cho từng nội dung.
+        --- YÊU CẦU TỔNG QUAN ---
+        Dựa vào TOÀN BỘ các nguồn dữ liệu, hãy tạo ra một bộ **CÂU HỎI ÔN TẬP** đầy đủ, phong phú và chi tiết. **ƯU TIÊN TUYỆT ĐỐI** thông tin từ **BẢN ĐẶC TẢ** để xác định số lượng, hình thức, và mức độ nhận thức cho từng nội dung.
         ${customInstruction}
+        --- SỐ LƯỢNG CÂU HỎI MỤC TIÊU BẮT BUỘC (HỆ THỐNG ĐÃ TÍNH TOÁN BẰNG CODE GẤP 2.5 LẦN MA TRẬN) ---
+        Để đảm bảo ngân hàng câu hỏi đủ lớn, tạo được nhiều đề thi hoàn toàn khác nhau mà không bị trùng lặp, bạn BẮT BUỘC PHẢI tạo ĐẦY ĐỦ số lượng câu hỏi sau:
+        ${targets.targetTN > 0 ? `- **Trắc nghiệm Nhiều lựa chọn (TN): BẮT BUỘC TỐI THIỂU ${targets.targetTN} CÂU.** Đánh số liên tục từ Câu 1 đến Câu ${targets.targetTN}.` : ''}
+        ${targets.targetDS > 0 ? `- **Trắc nghiệm Đúng - Sai (DS): BẮT BUỘC TỐI THIỂU ${targets.targetDS} CÂU.** Mỗi câu phải có đủ ${targets.soY} ý nhỏ (a, b, c, d).` : ''}
+        ${targets.targetTNgan > 0 ? `- **Trắc nghiệm Trả lời ngắn: BẮT BUỘC TỐI THIỂU ${targets.targetTNgan} CÂU.**` : ''}
+        ${targets.targetTL > 0 ? `- **Tự luận (TL): BẮT BUỘC TỐI THIỂU ${targets.targetTL} CÂU.**` : ''}
+        - **TỔNG CỘNG TOÀN BỘ NGÂN HÀNG: BẮT BUỘC SOẠN ĐỦ TỐI THIỂU ${targets.totalTarget} CÂU HỎI.**
+        
+        --- CHI TIẾT SỐ LƯỢNG TỐI THIỂU CẦN SOẠN CHO TỪNG BÀI HỌC (BẮT BUỘC TUÂN THỦ) ---
+        ${targets.breakdownText}
+
+        --- CHỈ THỊ ĐẶC BIỆT DÀNH CHO MODEL AI (CỰC KỲ QUAN TRỌNG ĐỂ KHÔNG BỊ CẮT NGẮN CÂU HỎI) ---
+        - **CẤM TUYỆT ĐỐI VIỆC DỪNG SỚM HOẶC RÚT GỌN:** Hạn mức xuất đã được mở rộng tối đa (65,536 tokens). Bạn CÓ THỪA BỘ NHỚ để xuất trọn vẹn toàn bộ ${targets.totalTarget} câu hỏi.
+        - **BẮT BUỘC SOẠN TỪ ĐẦU ĐẾN CUỐI:** Soạn đầy đủ từng câu hỏi kèm 4 phương án (với trắc nghiệm) hoặc các phát biểu và đáp án chi tiết. Không được dừng nửa chừng, không được tóm tắt.
+        - **TÍNH ĐỘC LẬP TỪNG CÂU:** Mỗi câu hỏi phải là một câu hoàn chỉnh, không được dùng các câu viết tắt như "Tương tự bài 1...", "Xem lại câu trước...", v.v.
+
         --- QUY TẮC CHUNG TẠO CÂU HỎI (RẤT QUAN TRỌNG) ---
         1.  **Bám sát Đặc tả và Ma trận:** Tạo câu hỏi cho TẤT CẢ các nội dung/chủ đề được liệt kê trong bản đặc tả và ma trận. "Yêu cầu cần đạt" trong bản đặc tả là kim chỉ nam cho nội dung câu hỏi.
-        2.  **Số lượng (CỰC KỲ QUAN TRỌNG):** Tạo ra số lượng câu hỏi CHÍNH XÁC GẤP 2.5 LẦN so với yêu cầu trong cột "soCau" của bản đặc tả cho mỗi loại. Ví dụ: nếu bản đặc tả yêu cầu 4 câu trắc nghiệm mức độ Nhận biết, bạn phải tạo ra chính xác 4 * 2.5 = 10 câu. Nếu kết quả phép nhân không phải là số nguyên (ví dụ: 1 * 2.5 = 2.5), hãy làm tròn lên thành số nguyên tiếp theo (tức là 3 câu). Đây là yêu cầu bắt buộc và phải được tuân thủ nghiêm ngặt.
-        3.  **Hình thức câu hỏi (CỰC KỲ QUAN TRỌNG):** Chỉ tạo các loại câu hỏi (Trắc nghiệm nhiều lựa chọn - TN, Đúng-Sai - DS, Trả lời ngắn - TNgan, Tự luận - TL) được chỉ định trong bản đặc tả. Nếu tổng số câu của một hình thức nào đó trong toàn bộ bản đặc tả là 0, thì TUYỆT ĐỐI KHÔNG được tạo ra bất kỳ câu hỏi nào thuộc hình thức đó.
-        4.  **Bao phủ mức độ:** Câu hỏi phải bao quát đủ các mức độ (Nhận biết, Thông hiểu, Vận dụng, Vận dụng cao) như đã được phân bổ trong bản đặc tả.
-        5.  **Nội dung từ SGK:** Tất cả nội dung câu hỏi và đáp án phải được lấy từ file SÁCH GIÁO KHOA đã cung cấp.
-        6.  **Đáp án chi tiết:** Cung cấp đáp án CHI TIẾT và RÕ RÀNG cho TẤT CẢ các câu hỏi. Đối với câu tự luận, hãy cung cấp hướng dẫn chấm điểm cơ bản.
+        2.  **Hình thức câu hỏi:** Chỉ tạo các loại câu hỏi (Trắc nghiệm nhiều lựa chọn - TN, Đúng-Sai - DS, Trả lời ngắn - TNgan, Tự luận - TL) được chỉ định trong bản đặc tả. Nếu tổng số câu của một hình thức nào đó trong toàn bộ bản đặc tả là 0, thì TUYỆT ĐỐI KHÔNG được tạo ra bất kỳ câu hỏi nào thuộc hình thức đó.
+        3.  **Bao phủ mức độ:** Câu hỏi phải bao quát đủ các mức độ (Nhận biết, Thông hiểu, Vận dụng, Vận dụng cao) như đã được phân bổ trong bản đặc tả.
+        4.  **Nội dung từ SGK:** Tất cả nội dung câu hỏi và đáp án phải được lấy từ file SÁCH GIÁO KHOA đã cung cấp.
+        5.  **Đáp án chi tiết:** Cung cấp đáp án CHI TIẾT và RÕ RÀNG cho TẤT CẢ các câu hỏi. Đối với câu tự luận, hãy cung cấp hướng dẫn chấm điểm cơ bản.
         
         --- QUY TẮC VỀ KÝ HIỆU TOÁN HỌC (CỰC KỲ QUAN TRỌNG) ---
-        7. **TUYỆT ĐỐI KHÔNG** sử dụng ký hiệu $ cho văn bản thông thường. 
-        8. **CHỈ SỬ DỤNG** cú pháp LaTeX ($...$ cho nội dòng, $$...$$ cho khối) cho các công thức toán học, vật lý, hóa học thực sự. Nếu nội dung là chữ viết bình thường, hãy để ở dạng văn bản thuần túy.
+        6. **TUYỆT ĐỐI KHÔNG** sử dụng ký hiệu $ cho văn bản thông thường. 
+        7. **CHỈ SỬ DỤNG** cú pháp LaTeX ($...$ cho nội dòng, $$...$$ cho khối) cho các công thức toán học, vật lý, hóa học thực sự. Nếu nội dung là chữ viết bình thường, hãy để ở dạng văn bản thuần túy.
         
         --- QUY TẮC RIÊNG CHO CÂU TRẮC NGHIỆM TIẾT KIỆM GIẤY (ĐỊNH DẠNG XUẤT WORD) ---
-        9. **Định dạng lựa chọn (A, B, C, D) - QUAN TRỌNG:** 
+        8. **Định dạng lựa chọn (A, B, C, D) - QUAN TRỌNG:** 
            - **TUYỆT ĐỐI KHÔNG** sử dụng CSS Flexbox (display: flex) vì Word không hỗ trợ.
            - **BẮT BUỘC** trình bày 4 phương án A, B, C, D theo cấu trúc **2 dòng 2 cột**. TUYỆT ĐỐI KHÔNG dàn hàng ngang 4 cột.
            - Cấu trúc HTML bắt buộc cho 2 dòng (2 cột):
              \`<table style="width:100%; border:none; table-layout:fixed;"><tr><td style="border:none; width:50%;">A. ...</td><td style="border:none; width:50%;">B. ...</td></tr><tr><td style="border:none; width:50%;">C. ...</td><td style="border:none; width:50%;">D. ...</td></tr></table>\`
            - Nếu đáp án rất dài, mỗi đáp án một dòng (không dùng table hoặc table 1 cột).
 
-        10. **XÁO TRỘN ĐÁP ÁN ĐÚNG NGẪU NHIÊN (CỰC KỲ QUAN TRỌNG - KHÔNG ĐƯỢC LƯỜI):** 
+        9. **XÁO TRỘN ĐÁP ÁN ĐÚNG NGẪU NHIÊN (CỰC KỲ QUAN TRỌNG - KHÔNG ĐƯỢC LƯỜI):** 
            - Đối với các câu hỏi trắc nghiệm nhiều lựa chọn (TN), bạn PHẢI **xáo trộn vị trí đáp án đúng một cách ngẫu nhiên tuyệt đối** giữa các phương án A, B, C, D.
            - **TUYỆT ĐỐI CẤM:** Không được để đáp án đúng tập trung vào một chữ cái cụ thể (như B hoặc A) cho nhiều câu hỏi liên tiếp. Tránh các quy luật dễ đoán.
            - **YÊU CẦU PHÂN BỔ ĐỀU:** Bạn phải phân bổ đáp án đúng sao cho tỷ lệ các phương án A, B, C, D được chọn làm đáp án đúng là xấp xỉ ngang nhau (khoảng 25% cho mỗi chữ cái) xuyên suốt từ đầu đến cuối bộ câu hỏi.
            - **PHẢI KIỂM TRA LẠI TỔNG THỂ:** Trước khi hoàn tất, hãy đếm lại số lượng đáp án A, B, C, D. Nếu một chữ cái chiếm quá 35% tổng số câu hỏi trắc nghiệm, bạn PHẢI hoán vị lại vị trí đáp án của các câu hỏi để đưa tỷ lệ về mức cân bằng.
-           - **MẸO:** Đừng để tình trạng các bài học đầu tiên thì xáo trộn tốt, nhưng các bài học phía sau thì đáp án đúng lại lặp lại một mẫu nhất định. Mọi câu hỏi phải được đối xử công bằng và ngẫu nhiên.
 
         --- QUY TẮC RIÊNG CHO CÂU HỎI ĐÚNG/SAI (CỰC KỲ QUAN TRỌNG) ---
-        11.  Mỗi câu hỏi dạng Đúng/Sai PHẢI bao gồm một câu dẫn chung và chính xác **${soCauNho}** câu phát biểu nhỏ (đánh dấu a, b, c, d, ...). Người học sẽ đánh giá từng phát biểu là Đúng hay Sai.
-        12. **CÂN BẰNG ĐÁP ÁN:** Trong một câu hỏi Đúng/Sai, các câu phát biểu nhỏ PHẢI có cả đáp án "Đúng" và "Sai". TUYỆT ĐỐI không được tạo ra một câu hỏi mà tất cả các phát biểu nhỏ đều là "Đúng" hoặc tất cả đều là "Sai".
-        13. **Ví dụ về định dạng HTML bắt buộc cho câu Đúng/Sai (với ${soCauNho} câu nhỏ):**
+        10.  Mỗi câu hỏi dạng Đúng/Sai PHẢI bao gồm một câu dẫn chung và chính xác **${soCauNho}** câu phát biểu nhỏ (đánh dấu a, b, c, d, ...). Người học sẽ đánh giá từng phát biểu là Đúng hay Sai.
+        11. **CÂN BẰNG ĐÁP ÁN:** Trong một câu hỏi Đúng/Sai, các câu phát biểu nhỏ PHẢI có cả đáp án "Đúng" và "Sai". TUYỆT ĐỐI không được tạo ra một câu hỏi mà tất cả các phát biểu nhỏ đều là "Đúng" hoặc tất cả đều là "Sai".
+        12. **Ví dụ về định dạng HTML bắt buộc cho câu Đúng/Sai (với ${soCauNho} câu nhỏ):**
             \`\`\`html
             <p><strong>Câu 2 (NB):</strong> Dựa vào kiến thức đã học, hãy cho biết các phát biểu sau đây đúng hay sai:</p>
             ${exampleStatements}
@@ -673,8 +778,8 @@ export const generateReviewQuestions = async (
             \`\`\`
         
         --- QUY TẮC RIÊNG CHO CÂU HỎI TRẢ LỜI NGẮN ---
-        14. Mỗi câu hỏi Trả lời ngắn yêu cầu người học điền một từ, cụm từ, hoặc số vào chỗ trống.
-        15. **Ví dụ về định dạng HTML bắt buộc cho câu Trả lời ngắn:**
+        13. Mỗi câu hỏi Trả lời ngắn yêu cầu người học điền một từ, cụm từ, hoặc số vào chỗ trống.
+        14. **Ví dụ về định dạng HTML bắt buộc cho câu Trả lời ngắn:**
             \`\`\`html
             <p><strong>Câu 3 (TH):</strong> Điền vào chỗ trống: Trái Đất quay quanh ____.</p>
             <div class="answer">
@@ -694,9 +799,16 @@ export const generateReviewQuestions = async (
         - Phản hồi CHỈ được phép chứa duy nhất nội dung HTML của các câu hỏi và đáp án theo đúng định dạng đã yêu cầu.
     `;
 
-  // --- SỬ DỤNG callWithRetry ---
+  // --- SỬ DỤNG callWithRetry VỚI MAXOUTPUTTOKENS LỚN ĐẢM BẢO KHÔNG BỊ CẮT XÉN ---
   const response = await callWithRetry<GenerateContentResponse>(() => 
-    getAiClient().models.generateContent({ model, contents: prompt })
+    getAiClient().models.generateContent({
+      model,
+      contents: prompt,
+      config: {
+        maxOutputTokens: 65536,
+        temperature: 0.7,
+      }
+    })
   );
   return response.text || "";
 };
@@ -713,14 +825,49 @@ const generateSingleExam = async (
   examTemplateContent?: string,
   soYTrongCauDungSai: number = 4,
   examTitle?: string,
-  schoolYear?: string
+  schoolYear?: string,
+  previousExams: string[] = []
 ): Promise<string> => {
   const model = currentAiModel;
+
+  let distinctExamInstruction = '';
+  if (index === 1) {
+    distinctExamInstruction = `
+        --- MỤC TIÊU CỦA ĐỀ SỐ 1: ---
+        - Đây là ĐỀ SỐ 1. Hãy lựa chọn các câu hỏi phù hợp nhất từ "NGÂN HÀNG CÂU HỎI" theo đúng ma trận.
+        - Hãy ưu tiên chọn các câu hỏi ở nửa đầu của từng bài/chủ đề trong ngân hàng để dành nửa sau cho Đề số 2.
+    `;
+  } else if (index === 2) {
+    const prevExamSnippet = previousExams[0] ? previousExams[0].substring(0, 10000) : '';
+    distinctExamInstruction = `
+        --- NGUYÊN TẮC BẮT BUỘC CHO ĐỀ SỐ 2 (KHÁC BIỆT HOÀN TOÀN VỚI ĐỀ 1): ---
+        - DƯỚI ĐÂY LÀ ĐỀ SỐ 1 ĐÃ ĐƯỢC TẠO:
+        [BẮT ĐẦU ĐỀ SỐ 1]
+        ${prevExamSnippet}
+        [KẾT THÚC ĐỀ SỐ 1]
+        
+        - **BẮT BUỘC KHÁC NHAU 100%:** Bạn PHẢI chọn các câu hỏi trong "NGÂN HÀNG CÂU HỎI" mà CHƯA TỪNG ĐƯỢC DÙNG trong Đề số 1 ở trên.
+        - **TUYỆT ĐỐI KHÔNG ĐƯỢC TRÙNG LẶP:** Không được chọn lại bất kỳ câu hỏi nào (cả câu trắc nghiệm nhiều lựa chọn, câu đúng sai, câu trả lời ngắn, tự luận) đã xuất hiện trong Đề số 1.
+        - Vì số lượng câu hỏi trong Ngân hàng câu hỏi gấp tới 2.5 lần ma trận, nên ngân hàng luôn có đủ 100% câu hỏi mới chưa dùng để Đề 2 KHÁC BIỆT HOÀN TOÀN so với Đề 1!
+    `;
+  } else if (index >= 3) {
+    const prevSnippets = previousExams.map((ex, idx) => `=== ĐỀ SỐ ${idx + 1} ===\n${ex.substring(0, 5000)}`).join('\n\n');
+    distinctExamInstruction = `
+        --- NGUYÊN TẮC BẮT BUỘC CHO ĐỀ SỐ ${index}: ---
+        - CÁC ĐỀ ĐÃ TẠO TRƯỚC ĐÓ:
+        ${prevSnippets}
+
+        - **NGUYÊN TẮC CHỌN CÂU HỎI CHO ĐỀ SỐ ${index}:**
+          1. Trước tiên, hãy ưu tiên chọn tất cả các câu hỏi CÒN LẠI trong "NGÂN HÀNG CÂU HỎI" mà chưa được sử dụng trong Đề 1 và Đề 2.
+          2. Số lượng câu hỏi còn thiếu để đủ ma trận, bạn ĐƯỢC PHÉP lấy một số câu hỏi từ Đề 1 và Đề 2 để trộn lại.
+          3. BẮT BUỘC: Đối với tất cả câu hỏi được chọn vào Đề số ${index}, bạn PHẢI xáo trộn vị trí thứ tự câu hỏi và hoán vị ngẫu nhiên thứ tự các phương án A, B, C, D để tạo thành một đề thi mới độc lập.
+    `;
+  }
 
   const similarityInstruction = `
         --- QUY TẮC VỀ NGUỒN CÂU HỎI (CỰC KỲ QUAN TRỌNG) ---
         -   TOÀN BỘ câu hỏi PHẢI được lấy từ "NGÂN HÀNG CÂU HỎI" đã cung cấp.
-        -   Nếu số lượng câu hỏi trong "NGÂN HÀNG CÂU HỎI" không đủ để tạo ra các đề khác biệt hoàn toàn, bạn ĐƯỢC PHÉP sử dụng lại các câu hỏi đã có (chấp nhận các đề giống nhau về câu hỏi) nhưng BẮT BUỘC PHẢI xáo trộn thứ tự câu hỏi và hoán vị thứ tự các phương án A, B, C, D một cách ngẫu nhiên.
+        ${distinctExamInstruction}
         -   Tuyệt đối không sử dụng các nguồn kiến thức bên ngoài nếu không có trong ngân hàng câu hỏi.
     `;
 
@@ -756,7 +903,8 @@ const generateSingleExam = async (
 
   const prompt = `
         Bạn là một AI chuyên tạo đề kiểm tra chất lượng cao. 
-        Đây là đề thi số **${index}** trong bộ 3 đề. Hãy đảm bảo nó được xáo trộn thứ tự câu hỏi và thứ tự đáp án. Nếu ngân hàng câu hỏi không đủ để tạo các đề khác biệt (khi chọn 100%), bạn hãy sử dụng lại câu hỏi từ ngân hàng nhưng phải xáo trộn chúng.
+        Đây là đề thi số **${index}** trong bộ đề thi.
+        ${distinctExamInstruction}
 
         --- NGUỒN DỮ LIỆU ---
         1.  **NGÂN HÀNG CÂU HỎI (NGUỒN CHÍNH VÀ DUY NHẤT):** ${reviewText}
@@ -791,6 +939,9 @@ const generateSingleExam = async (
     getAiClient().models.generateContent({
       model,
       contents: prompt,
+      config: {
+        maxOutputTokens: 65536,
+      }
       // KHÔNG sử dụng responseMimeType: "application/json" ở đây để tránh lỗi escape HTML quá dài gây đứng chương trình
     })
   );
@@ -822,7 +973,8 @@ export const generateExams = async (
   count: number = 3,
   soYTrongCauDungSai: number = 4,
   examTitle?: string,
-  schoolYear?: string
+  schoolYear?: string,
+  existingExams: string[] = []
 ): Promise<string[]> => {
   const reviewText = fileToText(reviewFileContent, "Ngân hàng câu hỏi ôn tập");
   const matrixText = `--- BẮT ĐẦU MA TRẬN ---\n${matrix}\n--- KẾT THÚC MA TRẬN ---`;
@@ -830,13 +982,26 @@ export const generateExams = async (
   console.log(`Bắt đầu tạo ${count} đề thi tuần tự từ đề ${startIndex}...`);
 
   const exams: string[] = [];
+  const allKnownExams: string[] = [...existingExams];
   const indices = Array.from({length: count}, (_, i) => startIndex + i);
 
   try {
     for (const i of indices) {
       console.log(`Đang tạo đề thi số ${i}...`);
-      const exam = await generateSingleExam(i, reviewText, matrixText, "", similarityPercentage, examTemplateContent, soYTrongCauDungSai, examTitle, schoolYear);
+      const exam = await generateSingleExam(
+        i, 
+        reviewText, 
+        matrixText, 
+        "", 
+        similarityPercentage, 
+        examTemplateContent, 
+        soYTrongCauDungSai, 
+        examTitle, 
+        schoolYear,
+        allKnownExams
+      );
       exams.push(exam);
+      allKnownExams.push(exam);
       console.log(`Đã hoàn thành đề thi số ${i}.`);
       // Delay 2 giây giữa các lần gọi để tránh rate limit (429)
       if (i < indices[indices.length - 1]) await wait(2000); 

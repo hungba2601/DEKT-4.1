@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import type { SpecData, QuestionCounts, CognitiveLevelQuestionCounts, MatrixConfig } from '../types';
+import { removeCompetencyCodes } from '../services/geminiService';
 
 interface Tab3Props {
   generatedSpec: SpecData;
@@ -94,17 +95,44 @@ const getCount = (count: number | undefined) => {
 // Helper: get letter label for DS ý (0 -> 'a', 1 -> 'b', ...)
 const getLetterLabel = (index: number): string => String.fromCharCode(97 + index);
 
-// Helper: format DS ý display, e.g. "2 (1a,1b)"
-// dsQuestionNumber: the sequential DS question number across all rows
-// yCount: number of ý at this level
-// startLetterIndex: the starting letter index (0-based) for this level's ý
-const formatDsY = (dsQuestionNumber: number, yCount: number, startLetterIndex: number): string => {
-    if (!yCount || yCount <= 0) return '';
-    const labels: string[] = [];
-    for (let i = 0; i < yCount; i++) {
-        labels.push(`${dsQuestionNumber}${getLetterLabel(startLetterIndex + i)}`);
+// Helper: format multi-question DS display
+const formatMultiDsYDisplay = (
+  startQ: number,
+  qCount: number,
+  totalY: number,
+  letterStart: number,
+  letterCountPerQ: number
+): string => {
+  if (!totalY || totalY <= 0) return '';
+  const labels: string[] = [];
+  let added = 0;
+  for (let q = startQ; q < startQ + qCount && added < totalY; q++) {
+    for (let l = 0; l < letterCountPerQ && added < totalY; l++) {
+      labels.push(`${q}${getLetterLabel(letterStart + l)}`);
+      added++;
     }
-    return `${yCount} (${labels.join(',')})`;
+  }
+  while (added < totalY) {
+    labels.push(`ý${added + 1}`);
+    added++;
+  }
+  return `${totalY} (${labels.join(',')})`;
+};
+
+const formatDsY = (dsQuestionNumber: number, yCount: number, startLetterIndex: number): string => {
+  return formatMultiDsYDisplay(dsQuestionNumber, 1, yCount, startLetterIndex, yCount);
+};
+
+// In đậm các từ khóa mức độ nhận biết, thông hiểu, vận dụng
+const formatYcccdHtml = (text: string): string => {
+  if (!text) return '';
+  const sanitized = removeCompetencyCodes(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  return sanitized
+    .replace(/(Nhận biết|Thông hiểu|Vận dụng cao|Vận dụng|Biết|Hiểu)(:)/gi, '<strong>$1$2</strong>')
+    .replace(/\n/g, '<br/>');
 };
 
 // Helper: format standard questions, e.g. "2 (C1,2)"
@@ -122,6 +150,32 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingContent, setEditingContent] = useState({ text: '', topicIndex: -1, rowIndex: -1 });
   const specContainerRef = useRef<HTMLDivElement>(null);
+
+  // Tự động kiểm tra và làm sạch mã năng lực nếu dữ liệu spec hiện tại còn chứa mã
+  useEffect(() => {
+    if (!generatedSpec || generatedSpec.length === 0) return;
+    let hasCodes = false;
+    for (const topic of generatedSpec) {
+      for (const row of topic.rows) {
+        if (row.yeuCauCanDat && removeCompetencyCodes(row.yeuCauCanDat) !== row.yeuCauCanDat) {
+          hasCodes = true;
+          break;
+        }
+      }
+      if (hasCodes) break;
+    }
+
+    if (hasCodes) {
+      const cleanedSpec = generatedSpec.map(topic => ({
+        ...topic,
+        rows: topic.rows.map(row => ({
+          ...row,
+          yeuCauCanDat: removeCompetencyCodes(row.yeuCauCanDat)
+        }))
+      }));
+      setGeneratedSpec(cleanedSpec);
+    }
+  }, [generatedSpec, setGeneratedSpec]);
 
   useEffect(() => {
     if (specContainerRef.current && window.renderMathInElement) {
@@ -210,7 +264,7 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
   const handleSave = (newText: string) => {
     const { topicIndex, rowIndex } = editingContent;
     const newSpec = JSON.parse(JSON.stringify(generatedSpec)); // Deep copy
-    newSpec[topicIndex].rows[rowIndex].yeuCauCanDat = newText;
+    newSpec[topicIndex].rows[rowIndex].yeuCauCanDat = removeCompetencyCodes(newText);
     setGeneratedSpec(newSpec);
     setIsModalOpen(false);
   };
@@ -272,8 +326,8 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
             tableHtml += `<td rowspan="${topic.rows.length}" class="text-left font-bold" style="vertical-align: middle;">${sanitizedChuDe}</td>`;
         }
         
-        tableHtml += `<td class="text-left">${sanitize(row.noiDung)}</td>`;
-        tableHtml += `<td class="text-left">${sanitize(row.yeuCauCanDat)}</td>`;
+        tableHtml += `<td class="text-left" style="vertical-align: top;">${sanitize(row.noiDung)}</td>`;
+        tableHtml += `<td class="text-left" style="vertical-align: top;">${formatYcccdHtml(row.yeuCauCanDat).replace(/<strong>/g, '<b>').replace(/<\/strong>/g, '</b>')}</td>`;
         
         // TN Nhiều lựa chọn
         const tn_nb = row.soCau.nhanBiet.TN || 0;
@@ -295,11 +349,29 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
         const ds_nb = row.soCau.nhanBiet.DS || 0;
         const ds_th = row.soCau.thongHieu.DS || 0;
         const ds_vd = (row.soCau.vanDung.DS || 0) + (row.soCau.vanDungCao.DS || 0);
-        const hasDsY = ds_nb + ds_th + ds_vd > 0;
-        if (hasDsY) exportDsQCounter++;
-        tableHtml += `<td>${hasDsY ? formatDsY(exportDsQCounter, ds_nb, 0) : ''}</td>`;
-        tableHtml += `<td>${hasDsY ? formatDsY(exportDsQCounter, ds_th, ds_nb) : ''}</td>`;
-        tableHtml += `<td>${hasDsY ? formatDsY(exportDsQCounter, ds_vd, ds_nb + ds_th) : ''}</td>`;
+        const rowDsY = ds_nb + ds_th + ds_vd;
+        const soY = matrixConfig?.soYTrongCauDungSai || 4;
+        const dsBiet = Math.min(2, soY);
+        const dsConLai = soY - dsBiet;
+        const dsHieu = Math.ceil(dsConLai / 2);
+        const dsVanDung = dsConLai - dsHieu;
+
+        let dsNbStr = '';
+        let dsThStr = '';
+        let dsVdStr = '';
+
+        if (rowDsY > 0) {
+          const qCount = Math.max(1, Math.round(rowDsY / soY));
+          const startQ = exportDsQCounter + 1;
+          exportDsQCounter += qCount;
+          dsNbStr = formatMultiDsYDisplay(startQ, qCount, ds_nb, 0, dsBiet);
+          dsThStr = formatMultiDsYDisplay(startQ, qCount, ds_th, dsBiet, dsHieu);
+          dsVdStr = formatMultiDsYDisplay(startQ, qCount, ds_vd, dsBiet + dsHieu, dsVanDung);
+        }
+
+        tableHtml += `<td>${dsNbStr}</td>`;
+        tableHtml += `<td>${dsThStr}</td>`;
+        tableHtml += `<td>${dsVdStr}</td>`;
 
         // TN Trả lời ngắn
         const tngan_nb = row.soCau.nhanBiet.TNgan || 0;
@@ -481,16 +553,25 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
                         const ds_nb = row.soCau.nhanBiet.DS || 0;
                         const ds_th = row.soCau.thongHieu.DS || 0;
                         const ds_vd_total = vd_ds;
-                        const hasDsY = ds_nb + ds_th + ds_vd_total > 0;
-                        let currentDsQNum = 0;
-                        if (hasDsY) {
-                            dsQuestionCounter++;
-                            currentDsQNum = dsQuestionCounter;
+                        const rowDsY = ds_nb + ds_th + ds_vd_total;
+                        const soY = matrixConfig?.soYTrongCauDungSai || 4;
+                        const dsBiet = Math.min(2, soY);
+                        const dsConLai = soY - dsBiet;
+                        const dsHieu = Math.ceil(dsConLai / 2);
+                        const dsVanDung = dsConLai - dsHieu;
+
+                        let dsNbDisplay = '';
+                        let dsThDisplay = '';
+                        let dsVdDisplay = '';
+
+                        if (rowDsY > 0) {
+                          const qCount = Math.max(1, Math.round(rowDsY / soY));
+                          const startQ = dsQuestionCounter + 1;
+                          dsQuestionCounter += qCount;
+                          dsNbDisplay = formatMultiDsYDisplay(startQ, qCount, ds_nb, 0, dsBiet);
+                          dsThDisplay = formatMultiDsYDisplay(startQ, qCount, ds_th, dsBiet, dsHieu);
+                          dsVdDisplay = formatMultiDsYDisplay(startQ, qCount, ds_vd_total, dsBiet + dsHieu, dsVanDung);
                         }
-                        // Tính vị trí chữ cái: NB lấy từ 0, TH lấy từ ds_nb, VD lấy từ ds_nb+ds_th
-                        const dsNbDisplay = hasDsY ? formatDsY(currentDsQNum, ds_nb, 0) : '';
-                        const dsThDisplay = hasDsY ? formatDsY(currentDsQNum, ds_th, ds_nb) : '';
-                        const dsVdDisplay = hasDsY ? formatDsY(currentDsQNum, ds_vd_total, ds_nb + ds_th) : '';
 
                         // Tính TN Trả lời ngắn display
                         const tngan_nb = row.soCau.nhanBiet.TNgan || 0;
@@ -525,9 +606,12 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
                                     </td>
                                 )}
                                 
-                                <td className="border border-gray-300 dark:border-gray-600 px-2 py-2">{row.noiDung}</td>
-                                <td className="border border-gray-300 dark:border-gray-600 px-2 py-2 relative group">
-                                    <span className="whitespace-pre-line">{row.yeuCauCanDat}</span>
+                                <td className="border border-gray-300 dark:border-gray-600 px-2 py-2 align-top">{row.noiDung}</td>
+                                <td className="border border-gray-300 dark:border-gray-600 px-2 py-2 relative group align-top">
+                                    <div 
+                                        className="leading-relaxed text-sm text-gray-800 dark:text-gray-200"
+                                        dangerouslySetInnerHTML={{ __html: formatYcccdHtml(row.yeuCauCanDat) }}
+                                    />
                                     <button
                                         onClick={() => handleEditClick(topicIndex, rowIndex, row.yeuCauCanDat)}
                                         className="absolute top-1 right-1 p-1 bg-gray-200 dark:bg-gray-600 rounded-full opacity-0 group-hover:opacity-100 transition-opacity focus:opacity-100"

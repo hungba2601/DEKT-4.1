@@ -213,7 +213,8 @@ const Tab5: React.FC<Tab5Props> = ({
         1,
         matrixConfig?.soYTrongCauDungSai || 4,
         examTitle,
-        schoolYear
+        schoolYear,
+        examPapers
       );
 
       clearInterval(progressInterval);

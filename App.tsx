@@ -85,7 +85,7 @@ const App: React.FC = () => {
 
   // API Key State
   const [apiKey, setApiKey] = useState<string>('');
-  const [aiModel, setAiModel] = useState<string>('gemini-3.6-flash');
+  const [aiModel, setAiModel] = useState<string>('gemini-3.1-flash-lite');
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState<boolean>(false);
   const [isQuotaExceeded, setIsQuotaExceeded] = useState<boolean>(false);
   const quotaExceededResolvers = useRef<((key: string) => void)[]>([]);
@@ -93,10 +93,11 @@ const App: React.FC = () => {
   // Load saved API Key and register Quota Exceeded handler
   useEffect(() => {
     const savedKey = localStorage.getItem('gemini_api_key');
-    let savedModel = localStorage.getItem('ai_model') || 'gemini-3.6-flash';
-    if (savedModel === 'gemini-3.5-flash') {
-      savedModel = 'gemini-3.8-flash';
-      localStorage.setItem('ai_model', 'gemini-3.8-flash');
+    let savedModel = localStorage.getItem('ai_model') || 'gemini-3.1-flash-lite';
+    if (savedModel === 'gemini-3.5-flash' || savedModel === 'gemini-3.6-flash' || savedModel === 'gemini-3-flash-preview') {
+      // Chuyển sang model mặc định mới Gemini 3.1 Flash Lite
+      savedModel = 'gemini-3.1-flash-lite';
+      localStorage.setItem('ai_model', 'gemini-3.1-flash-lite');
     }
     if (savedKey) {
       setApiKey(savedKey);
@@ -104,6 +105,7 @@ const App: React.FC = () => {
       setGeminiConfig(savedKey, savedModel);
     } else {
       setAiModel(savedModel);
+      setGeminiConfig('', savedModel);
     }
 
     // Đăng ký cơ chế tạm dừng khi hết hạn mức API

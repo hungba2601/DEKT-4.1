@@ -60,7 +60,9 @@ export interface User {
 export type TabName = 'tab1' | 'tab2' | 'tab3' | 'tab4' | 'tab5' | 'tab6' | 'tab7';
 
 export const GEMINI_MODELS = [
+  { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite (Khuyên dùng - Mặc định tối ưu)', description: 'Mặc định - Siêu nhanh, tiết kiệm token, tốc độ phản hồi tức thì', isDefault: true },
+  { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview (Cân bằng tốc độ & chất lượng)', description: 'Cân bằng hoàn hảo giữa tốc độ & chất lượng suy luận' },
   { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Tốc độ cao & Phản hồi tức thì)', description: 'Tốc độ cao & Phản hồi tức thì' },
-  { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash (Khuyên dùng - Chuẩn tối ưu & Ổn định)', description: 'Mặc định - Cân bằng hoàn hảo giữa tốc độ & chất lượng', isDefault: true },
-  { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash (Mới nhất - Suy luận nâng cao & Sáng tạo)', description: 'Mới nhất - Suy luận nâng cao & Sáng tạo' }
+  { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash (Chuẩn tối ưu & Ổn định)', description: 'Cân bằng giữa tốc độ & chất lượng' },
+  { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash (Suy luận nâng cao & Sáng tạo)', description: 'Suy luận nâng cao & Sáng tạo' }
 ];
