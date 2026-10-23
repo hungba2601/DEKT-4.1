@@ -159,7 +159,7 @@ const Tab5: React.FC<Tab5Props> = ({
         examTemplateContent,
         1,
         2,
-        matrixConfig?.soYTrongCauDungSai || 4,
+        matrixConfig,
         examTitle,
         schoolYear
       );
@@ -211,7 +211,7 @@ const Tab5: React.FC<Tab5Props> = ({
         examTemplateContent,
         3,
         1,
-        matrixConfig?.soYTrongCauDungSai || 4,
+        matrixConfig,
         examTitle,
         schoolYear,
         examPapers

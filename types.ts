@@ -66,3 +66,4 @@ export const GEMINI_MODELS = [
   { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash (Chuẩn tối ưu & Ổn định)', description: 'Cân bằng giữa tốc độ & chất lượng' },
   { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash (Suy luận nâng cao & Sáng tạo)', description: 'Suy luận nâng cao & Sáng tạo' }
 ];
+
