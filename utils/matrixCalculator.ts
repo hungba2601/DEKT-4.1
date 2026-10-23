@@ -628,3 +628,6 @@ export const calculateReviewTargetCounts = (
     breakdownText,
   };
 };
+
+export const generateHtmlFromSpec = generateMatrixHtml;
+
