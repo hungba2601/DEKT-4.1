@@ -939,6 +939,43 @@ const generateSingleExam = async (
 ): Promise<string> => {
   const model = currentAiModel;
 
+  const isConfigObj = typeof matrixConfigOrSoY === 'object' && matrixConfigOrSoY !== null;
+  const config = isConfigObj ? (matrixConfigOrSoY as MatrixConfig) : null;
+  const soY = config?.soYTrongCauDungSai || (typeof matrixConfigOrSoY === 'number' ? matrixConfigOrSoY : 4);
+  const isTuLuan100 = !!config?.isTuLuan100;
+
+  const htmlCounts = extractCountsFromMatrixHtml(matrixText, soY);
+
+  // Ưu tiên 100% config do người dùng cấu hình (từ Tab 1 hoặc Tab 3). Chỉ dùng htmlCounts nếu config không tồn tại.
+  const soCauNhieuLuaChon = (config && Number(config.soCauNhieuLuaChon) > 0)
+    ? Number(config.soCauNhieuLuaChon)
+    : (htmlCounts && htmlCounts.tn > 0 ? htmlCounts.tn : 12);
+
+  const soCauDungSai = (config && config.soCauDungSai !== undefined && config.soCauDungSai !== null && Number(config.soCauDungSai) >= 0)
+    ? Number(config.soCauDungSai)
+    : (htmlCounts && htmlCounts.dsCau > 0 ? htmlCounts.dsCau : 2);
+
+  const soCauTraLoiNgan = (config && config.soCauTraLoiNgan !== undefined && config.soCauTraLoiNgan !== null && Number(config.soCauTraLoiNgan) >= 0)
+    ? Number(config.soCauTraLoiNgan)
+    : (htmlCounts && htmlCounts.tngan > 0 ? htmlCounts.tngan : 0);
+
+  const soCauTuLuan = (config && config.soCauTuLuan !== undefined && config.soCauTuLuan !== null && Number(config.soCauTuLuan) >= 0)
+    ? Number(config.soCauTuLuan)
+    : (htmlCounts && htmlCounts.tl > 0 ? htmlCounts.tl : (isTuLuan100 ? 10 : 0));
+
+  const diemCauNhieuLuaChon = config?.diemCauNhieuLuaChon ?? 0.25;
+  const diemMoiY = config?.diemMoiYTrongCauDungSai ?? 0.25;
+  const diem1CauDS = soY * diemMoiY;
+  const diemCauTraLoiNgan = config?.diemCauTraLoiNgan ?? 0.25;
+  const diemCauTuLuan = config?.diemCauTuLuan ?? 1.0;
+
+  const tongDiemNLC = soCauNhieuLuaChon * diemCauNhieuLuaChon;
+  const tongDiemDS = soCauDungSai * diem1CauDS;
+  const tongDiemTNgan = soCauTraLoiNgan * diemCauTraLoiNgan;
+  const tongDiemTL = soCauTuLuan * diemCauTuLuan;
+
+  const sgkSection = sgkText ? fileToText(sgkText, "Sách giáo khoa (Bổ trợ nếu ngân hàng câu hỏi thiếu)") : "";
+
   let distinctExamInstruction = '';
   if (index === 1) {
     distinctExamInstruction = `
@@ -1159,10 +1196,10 @@ export const generateExams = async (
         i, 
         reviewText, 
         matrixText, 
-        "", 
+        sgkFileContent, 
         similarityPercentage, 
         examTemplateContent, 
-        soYTrongCauDungSai, 
+        matrixConfigOrSoY, 
         examTitle, 
         schoolYear,
         allKnownExams
