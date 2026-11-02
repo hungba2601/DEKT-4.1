@@ -503,7 +503,7 @@ const App: React.FC = () => {
         <div className="w-full max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="py-4 flex items-center justify-between">
             <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-red-600 dark:text-red-500">
-              APP TẠO ĐỀ KIỂM TRA + MA TRẬN ĐẶC TẢ CV 7991 (AI) VER 4.1
+              APP TẠO ĐỀ KIỂM TRA + MA TRẬN ĐẶC TẢ CV 7991 (AI) VER 5.0
             </h1>
             <div className="flex items-center gap-4">
               <ThemeSwitcher theme={theme} toggleTheme={toggleTheme} />
