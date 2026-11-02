@@ -1,5 +1,6 @@
 
 import React, { useEffect, useRef, useState } from 'react';
+import { exportHtmlToDocx } from '../utils/docxExport';
 import { generateReviewQuestions } from '../services/geminiService';
 import { readFileContent } from '../utils/fileReader';
 import type { MatrixConfig, SpecData, TabName } from '../types';
@@ -135,34 +136,9 @@ const Tab4: React.FC<Tab4Props> = ({
     } 
   };
 
-  const exportContentToDoc = (content: string, filename: string) => {
-    if (!content) return;
-    
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html lang="vi">
-      <head>
-        <meta charset="UTF-8">
-        <title>${filename}</title>
-      </head>
-      <body>
-        ${content}
-      </body>
-      </html>
-    `;
-    const blob = new Blob([htmlContent], { type: 'application/msword' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
+  
   const handleExportForTeachers = () => {
-    exportContentToDoc(reviewQuestions, 'cau_hoi_on_tap_giao_vien.doc');
+    exportHtmlToDocx(reviewQuestions, 'cau_hoi_on_tap_giao_vien.docx', { orientation: 'portrait', title: 'Câu hỏi ôn tập - Giáo viên' });
   };
 
   const handleExportForStudents = () => {
@@ -189,7 +165,7 @@ const Tab4: React.FC<Tab4Props> = ({
     const studentVersion = container.innerHTML;
 
     // 5. Export the cleaned HTML
-    exportContentToDoc(studentVersion, 'cau_hoi_on_tap_hoc_sinh.doc');
+    exportHtmlToDocx(studentVersion, 'cau_hoi_on_tap_hoc_sinh.docx', { orientation: 'portrait', title: 'Câu hỏi ôn tập - Học sinh' });
   };
 
 
@@ -219,7 +195,7 @@ const Tab4: React.FC<Tab4Props> = ({
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
             </svg>
-            Xuất file word cho GV
+            Xuất file Word (.docx) cho GV
           </button>
           <button
             onClick={handleExportForStudents}
@@ -229,7 +205,7 @@ const Tab4: React.FC<Tab4Props> = ({
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
             </svg>
-            Xuất file word cho HS
+            Xuất file Word (.docx) cho HS
           </button>
         </div>
       </div>

@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
+import { exportHtmlToDocx } from '../utils/docxExport';
 import { generateExams } from '../services/geminiService';
 import { convertFileToHtml } from '../utils/fileReader';
 
@@ -15,6 +16,7 @@ interface Tab5Props {
   matrixConfig: any; // Add matrixConfig
   examTitle?: string;
   schoolYear?: string;
+  defaultReviewQuestions?: string;
 }
 
 // Make renderMathInElement globally available for TypeScript
@@ -35,11 +37,20 @@ const Tab5: React.FC<Tab5Props> = ({
   sgkFileContent,
   matrixConfig,
   examTitle,
-  schoolYear
+  schoolYear,
+  defaultReviewQuestions
 }) => {
-  const [reviewFileContent, setReviewFileContent] = useState<string>('');
-  const [reviewFileStatus, setReviewFileStatus] = useState<'idle' | 'parsing' | 'success' | 'error'>('idle');
-  const [reviewFileFeedback, setReviewFileFeedback] = useState<string>('');
+  const [reviewFileContent, setReviewFileContent] = useState<string>(() => defaultReviewQuestions || '');
+  const [reviewFileStatus, setReviewFileStatus] = useState<'idle' | 'parsing' | 'success' | 'error'>(() => defaultReviewQuestions ? 'success' : 'idle');
+  const [reviewFileFeedback, setReviewFileFeedback] = useState<string>(() => defaultReviewQuestions ? 'Đã tự động lấy câu hỏi từ Tab 5' : '');
+
+  useEffect(() => {
+    if (!reviewFileContent && defaultReviewQuestions) {
+      setReviewFileContent(defaultReviewQuestions);
+      setReviewFileStatus('success');
+      setReviewFileFeedback('Đã tự động lấy câu hỏi từ Tab 5');
+    }
+  }, [defaultReviewQuestions]);
 
   const [templateFileStatus, setTemplateFileStatus] = useState<'idle' | 'parsing' | 'success' | 'error'>('idle');
   const [templateFileFeedback, setTemplateFileFeedback] = useState<string>('');
@@ -74,8 +85,11 @@ const Tab5: React.FC<Tab5Props> = ({
       try {
         // Fix: Use convertFileToHtml to preserve structure needed by the AI.
         const htmlContent = await convertFileToHtml(file);
+        if (!htmlContent || htmlContent.trim().length === 0) {
+          throw new Error('File rỗng hoặc không có nội dung câu hỏi.');
+        }
         setReviewFileContent(htmlContent);
-        setReviewFileFeedback(file.name);
+        setReviewFileFeedback(file.name + ' (Đã sẵn sàng tạo đề)');
         setReviewFileStatus('success');
       } catch (err) {
         const message = err instanceof Error ? err.message : "Lỗi không xác định khi xử lý file.";
@@ -233,51 +247,7 @@ const Tab5: React.FC<Tab5Props> = ({
     }
   };
 
-  const exportToDoc = (content: string, filename: string) => {
-    if (!content) return;
-    // Thêm CSS chuyên biệt cho Word để xử lý table viền và không viền
-    // Word rất nhạy cảm với CSS inline hoặc thẻ <style>
-    const fullHtml = `
-      <!DOCTYPE html>
-      <html lang="vi">
-      <head>
-        <meta charset="UTF-8">
-        <title>${filename}</title>
-        <style>
-            body { font-family: 'Times New Roman', serif; font-size: 12pt; line-height: 1.3; }
-            
-            /* CSS chung cho bảng */
-            table { border-collapse: collapse; width: 100%; margin-bottom: 10px; }
-            td { padding: 4px; vertical-align: top; }
-            
-            /* Class cho bảng đáp án trắc nghiệm (có viền) */
-            table[border="1"], table.bordered { border: 1px solid black; }
-            table[border="1"] td, table.bordered td { border: 1px solid black; text-align: center; }
-            
-            /* Class cho bảng layout câu hỏi (không viền) */
-            table[border="0"], table.no-border { border: none; }
-            table[border="0"] td, table.no-border td { border: none; text-align: left; }
-
-            .answer-key-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-            .answer-key-table td { border: 1px solid black; text-align: center; font-weight: bold; padding: 5px; }
-        </style>
-      </head>
-      <body>
-        ${content}
-      </body>
-      </html>
-    `;
-    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), fullHtml], { type: 'application/msword;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
+  
   const isFirstGeneration = examPapers.length === 0;
 
   return (
@@ -294,7 +264,7 @@ const Tab5: React.FC<Tab5Props> = ({
               </label>
               {reviewFileFeedback && <span className={`ml-4 text-sm font-medium ${getReviewFeedbackClasses()}`}>{reviewFileFeedback}</span>}
             </div>
-            <p className="text-sm text-red-600 dark:text-red-400 font-bold mt-1">Bạn có thể sử dụng file word cho GV đã xuất từ Tab 4 DẠNG DOCX. (BẠN CẦN CHUYỂN FILE WORD XUẤT RA TỪ TAB 4 DẠNG DOC THÀNH DOCX ĐỂ CHƯƠNG TRÌNH ĐỌC ĐƯỢC NHÉ).</p>
+            <p className="text-xs text-blue-600 dark:text-blue-400 font-medium mt-1">💡 Bạn có thể tải lên trực tiếp file Word (.docx) câu hỏi ôn tập vừa xuất từ Tab 5, hoặc hệ thống sẽ tự động liên kết nếu đã tạo ở Tab 5.</p>
           </div>
           <div>
             <label htmlFor="template-file-upload" className="block text-base font-bold text-blue-600 dark:text-blue-400 mb-1">2. Tải file mẫu đề kiểm tra (Tùy chọn)</label>
@@ -334,6 +304,16 @@ const Tab5: React.FC<Tab5Props> = ({
           >
             {isFirstGeneration ? 'Tạo 2 Đề Thi Trước' : 'Tạo lại 2 đề khác'}
           </button>
+          {(!reviewFileContent || !generatedMatrix) && (
+            <div className="text-xs text-center font-medium space-y-0.5 mt-1">
+              {!generatedMatrix && (
+                <p className="text-amber-600 dark:text-amber-400">⚠️ Chưa có Ma trận (vui lòng tạo ở Tab 2 hoặc Tab 3)</p>
+              )}
+              {!reviewFileContent && (
+                <p className="text-amber-600 dark:text-amber-400">⚠️ Chưa có câu hỏi ôn tập (hãy tải file lên ở mục 1)</p>
+              )}
+            </div>
+          )}
           
           {examPapers.length === 2 && (
             <button
@@ -353,10 +333,10 @@ const Tab5: React.FC<Tab5Props> = ({
               <div className="p-4 bg-gray-100 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
                 <h3 className="text-lg sm:text-xl font-bold text-gray-800 dark:text-gray-200">Đề số {index + 1}</h3>
                 <button
-                  onClick={() => exportToDoc(paper, `de_thi_so_${index + 1}.doc`)}
+                  onClick={() => exportHtmlToDocx(paper, `de_thi_so_${index + 1}.docx`, { orientation: 'portrait', title: `Đề thi số ${index + 1}` })}
                   className="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 text-sm"
                 >
-                  Xuất File Word
+                  Xuất Word (.docx)
                 </button>
               </div>
               <div

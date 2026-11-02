@@ -521,33 +521,33 @@ export const generateMatrixHtml = (
 
   html += `</tbody>
   <tfoot>
-      <tr style="font-weight: bold;">
-          <td colspan="2">Tổng (Số câu, ý - Điểm)</td>
-          <td>${fmtColTotal(sumTN.nb, sumTN.nb * config.diemCauNhieuLuaChon)}</td>
-          <td>${fmtColTotal(sumTN.th, sumTN.th * config.diemCauNhieuLuaChon)}</td>
-          <td>${fmtColTotal(sumTN.vd, sumTN.vd * config.diemCauNhieuLuaChon)}</td>
-          <td>${fmtColTotalY(sumDS.nb, sumDS.nb * config.diemMoiYTrongCauDungSai)}</td>
-          <td>${fmtColTotalY(sumDS.th, sumDS.th * config.diemMoiYTrongCauDungSai)}</td>
-          <td>${fmtColTotalY(sumDS.vd, sumDS.vd * config.diemMoiYTrongCauDungSai)}</td>
-          <td>${fmtColTotal(sumTNgan.nb, sumTNgan.nb * config.diemCauTraLoiNgan)}</td>
-          <td>${fmtColTotal(sumTNgan.th, sumTNgan.th * config.diemCauTraLoiNgan)}</td>
-          <td>${fmtColTotal(sumTNgan.vd, sumTNgan.vd * config.diemCauTraLoiNgan)}</td>
-          <td>${fmtColTotal(sumTL.nb, sumTL.nb * config.diemCauTuLuan)}</td>
-          <td>${fmtColTotal(sumTL.th, sumTL.th * config.diemCauTuLuan)}</td>
-          <td>${fmtColTotal(sumTL.vd, sumTL.vd * config.diemCauTuLuan)}</td>
-          <td>${formatFooterTotal(footer_nb_cau, footer_nb_y, footer_nb_points, footer_nb_tl)}</td>
-          <td>${formatFooterTotal(footer_th_cau, footer_th_y, footer_th_points, footer_th_tl)}</td>
-          <td>${formatFooterTotal(footer_vd_cau, footer_vd_y, footer_vd_points, footer_vd_tl)}</td>
-          <td>${grandTotalString}</td>
+      <tr style="font-weight: bold; background-color: #f8fafc;">
+          <td colspan="2" style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>Tổng (Số câu, ý - Điểm)</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${fmtColTotal(sumTN.nb, sumTN.nb * config.diemCauNhieuLuaChon)}</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${fmtColTotal(sumTN.th, sumTN.th * config.diemCauNhieuLuaChon)}</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${fmtColTotal(sumTN.vd, sumTN.vd * config.diemCauNhieuLuaChon)}</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${fmtColTotalY(sumDS.nb, sumDS.nb * config.diemMoiYTrongCauDungSai)}</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${fmtColTotalY(sumDS.th, sumDS.th * config.diemMoiYTrongCauDungSai)}</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${fmtColTotalY(sumDS.vd, sumDS.vd * config.diemMoiYTrongCauDungSai)}</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${fmtColTotal(sumTNgan.nb, sumTNgan.nb * config.diemCauTraLoiNgan)}</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${fmtColTotal(sumTNgan.th, sumTNgan.th * config.diemCauTraLoiNgan)}</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${fmtColTotal(sumTNgan.vd, sumTNgan.vd * config.diemCauTraLoiNgan)}</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${fmtColTotal(sumTL.nb, sumTL.nb * config.diemCauTuLuan)}</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${fmtColTotal(sumTL.th, sumTL.th * config.diemCauTuLuan)}</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${fmtColTotal(sumTL.vd, sumTL.vd * config.diemCauTuLuan)}</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${formatFooterTotal(footer_nb_cau, footer_nb_y, footer_nb_points, footer_nb_tl)}</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${formatFooterTotal(footer_th_cau, footer_th_y, footer_th_points, footer_th_tl)}</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${formatFooterTotal(footer_vd_cau, footer_vd_y, footer_vd_points, footer_vd_tl)}</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${grandTotalString}</strong></td>
       </tr>
-      <tr style="font-weight: bold;">
-          <td colspan="2">Tỉ lệ %</td>
-          <td colspan="9">${config.tracNghiem}% (TNKQ)</td>
-          <td colspan="3">${config.tuLuan}% (Tự luận)</td>
-          <td>${config.biet}%</td>
-          <td>${config.hieu}%</td>
-          <td>${config.vanDung}%</td>
-          <td>100%</td>
+      <tr style="font-weight: bold; background-color: #f8fafc;">
+          <td colspan="2" style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>Tỉ lệ %</strong></td>
+          <td colspan="9" style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${config.tracNghiem}% (TNKQ)</strong></td>
+          <td colspan="3" style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${config.tuLuan}% (Tự luận)</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${config.biet}%</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${config.hieu}%</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>${config.vanDung}%</strong></td>
+          <td style="font-weight: bold; text-align: center; vertical-align: middle;"><strong>100%</strong></td>
       </tr>
   </tfoot>
   </table>`;

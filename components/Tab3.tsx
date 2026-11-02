@@ -1,5 +1,6 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { exportHtmlToDocx } from '../utils/docxExport';
 import type { SpecData, QuestionCounts, CognitiveLevelQuestionCounts, MatrixConfig } from '../types';
 import { removeCompetencyCodes } from '../services/geminiService';
 
@@ -18,40 +19,6 @@ declare global {
   }
 }
 
-const exportHtmlToDoc = (htmlContent: string, filename: string) => {
-    if (!htmlContent) return;
-    
-    const fullHtml = `
-        <!DOCTYPE html>
-        <html lang="vi">
-        <head>
-            <meta charset="UTF-8">
-            <title>${filename}</title>
-            <style>
-                table { width: 100%; border-collapse: collapse; font-family: 'Times New Roman', serif; font-size: 11pt; }
-                th, td { border: 1px solid black; padding: 5px; vertical-align: middle; text-align: center; }
-                th { font-weight: bold; }
-                .text-left { text-align: left; }
-                .bg-header { background-color: #f0f0f0; }
-                .font-bold { font-weight: bold; }
-            </style>
-        </head>
-        <body>
-            ${htmlContent}
-        </body>
-        </html>
-    `;
-
-    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), fullHtml], { type: 'application/msword;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${filename}.doc`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-};
 
 
 const EditModal: React.FC<{
@@ -456,7 +423,7 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
     
     tableHtml += `</tbody></table>`;
 
-    exportHtmlToDoc(tableHtml, 'ban_dac_ta_de_kiem_tra');
+    exportHtmlToDocx(tableHtml, 'ban_dac_ta_de_kiem_tra.docx', { orientation: 'landscape', title: 'Bản đặc tả đề kiểm tra' });
   };
 
   return (
@@ -479,7 +446,7 @@ const Tab3: React.FC<Tab3Props> = ({ generatedSpec, setGeneratedSpec, examTitle,
             className="flex items-center gap-2 bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" /></svg>
-            Xuất Word
+            Xuất Word (.docx)
           </button>
         </div>
       </div>

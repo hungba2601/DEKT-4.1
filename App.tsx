@@ -149,7 +149,6 @@ const App: React.FC = () => {
     // Chỉ setAuthStatus ban đầu
   }, []);
 
-
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window !== 'undefined' && window.localStorage) {
       const storedTheme = window.localStorage.getItem('theme') as Theme;
@@ -308,9 +307,26 @@ const App: React.FC = () => {
   });
 
   // State for Tab 2 (Matrix)
-  const [generatedMatrix, setGeneratedMatrix] = useState<string>('');
+  const [generatedMatrix, setGeneratedMatrix] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return sessionStorage.getItem('app_generated_matrix') || '';
+    }
+    return '';
+  });
   // State for New Tab 3 (Manual Matrix HTML string)
-  const [manualMatrixHtml, setManualMatrixHtml] = useState<string>('');
+  const [manualMatrixHtml, setManualMatrixHtml] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return sessionStorage.getItem('app_manual_matrix') || '';
+    }
+    return '';
+  });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      if (generatedMatrix) sessionStorage.setItem('app_generated_matrix', generatedMatrix);
+      if (manualMatrixHtml) sessionStorage.setItem('app_manual_matrix', manualMatrixHtml);
+    }
+  }, [generatedMatrix, manualMatrixHtml]);
   // State for Tab 4 (Specification) - previously Tab 3
   const [generatedSpec, setGeneratedSpec] = useState<SpecData>([]);
   // State store for Tab 3 (Manual Data) to persist across tab switches
@@ -452,6 +468,7 @@ const App: React.FC = () => {
             matrixConfig={matrixConfig}
             examTitle={examTitle}
             schoolYear={schoolYear}
+            defaultReviewQuestions={reviewQuestions}
           />
         );
       case 'tab7':

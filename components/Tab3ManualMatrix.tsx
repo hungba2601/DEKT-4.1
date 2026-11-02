@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import type { SpecData, MatrixConfig, CognitiveLevelQuestionCounts, QuestionCounts } from '../types';
 import { generateHtmlFromSpec } from '../utils/matrixCalculator';
+import { exportHtmlToDocx } from '../utils/docxExport';
 
 interface Tab3ManualMatrixProps {
   generatedSpec: SpecData;
@@ -42,38 +43,6 @@ const createEmptySpec = (sourceSpec: SpecData): SpecData => {
   }));
 };
 
-const exportHtmlToDoc = (htmlContent: string, filename: string) => {
-    if (!htmlContent) return;
-    
-    const fullHtml = `
-        <!DOCTYPE html>
-        <html lang="vi">
-        <head>
-            <meta charset="UTF-8">
-            <title>${filename}</title>
-            <style>
-                table { border-collapse: collapse; width: 100%; font-family: 'Times New Roman', serif; font-size: 11pt; }
-                th, td { border: 1px solid black; padding: 5px; text-align: center; }
-                th { font-weight: bold; background-color: #f2f2f2; }
-                .text-left { text-align: left; }
-            </style>
-        </head>
-        <body>
-            ${htmlContent}
-        </body>
-        </html>
-    `;
-
-    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), fullHtml], { type: 'application/msword;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${filename}.doc`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-};
 
 const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({ 
   generatedSpec, 
@@ -184,7 +153,11 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
 
   const handleExport = () => {
       if (!previewHtml) return;
-      exportHtmlToDoc(previewHtml, `Ma_Tran_Tu_Nhap_${examTitle.replace(/\s+/g, '_')}`);
+      const title = (examTitle || 'De_kiem_tra').trim().replace(/\s+/g, '_');
+      exportHtmlToDocx(previewHtml, `Ma_Tran_Tu_Nhap_${title}.docx`, {
+        orientation: 'landscape',
+        title: 'Ma trận đề kiểm tra'
+      });
   };
 
 
@@ -268,7 +241,7 @@ const Tab3ManualMatrix: React.FC<Tab3ManualMatrixProps> = ({
                     className="flex items-center gap-2 bg-green-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors shadow-md"
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" /></svg>
-                    Xuất Word
+                    Xuất Word (.docx)
                 </button>
             </div>
         </div>

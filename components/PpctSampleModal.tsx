@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { exportHtmlToDocx } from '../utils/docxExport';
 
 interface PpctSampleModalProps {
   isOpen: boolean;
@@ -106,17 +107,7 @@ Chủ đề 3: Bài 4. Một số vấn đề pháp lý về sử dụng dịch 
       </html>
     `;
 
-    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), htmlContent], {
-      type: 'application/msword;charset=utf-8',
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'Mau_PPCT_PhuLuc1.doc';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    exportHtmlToDocx(htmlContent, 'Mau_PPCT_PhuLuc1.docx', { orientation: 'landscape', title: 'Mẫu PPCT Phụ lục 1' });
   };
 
   return (
@@ -268,7 +259,7 @@ Chủ đề 3: Bài 4. Một số vấn đề pháp lý về sử dụng dịch 
               onClick={handleDownloadWord}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-semibold rounded-lg shadow-sm transition"
             >
-              📥 Tải file mẫu Word (.doc)
+              📥 Tải file mẫu Word (.docx)
             </button>
             <button
               onClick={handleCopyText}

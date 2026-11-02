@@ -1,5 +1,6 @@
 
 import React, { useEffect, useRef } from 'react';
+import { exportHtmlToDocx } from '../utils/docxExport';
 
 interface Tab2Props {
   generatedMatrix: string;
@@ -11,33 +12,6 @@ declare global {
     renderMathInElement?: (element: HTMLElement, options?: any) => void;
   }
 }
-
-const exportHtmlToDoc = (htmlContent: string, filename: string) => {
-    if (!htmlContent) return;
-    
-    const fullHtml = `
-        <!DOCTYPE html>
-        <html lang="vi">
-        <head>
-            <meta charset="UTF-8">
-            <title>${filename}</title>
-        </head>
-        <body>
-            ${htmlContent}
-        </body>
-        </html>
-    `;
-
-    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), fullHtml], { type: 'application/msword;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${filename}.doc`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-};
 
 
 const Tab2: React.FC<Tab2Props> = ({ generatedMatrix }) => {
@@ -63,12 +37,12 @@ const Tab2: React.FC<Tab2Props> = ({ generatedMatrix }) => {
         <h2 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100">Ma trận đề kiểm tra</h2>
         <div className="flex items-center gap-2 flex-shrink-0">
           <button
-            onClick={() => exportHtmlToDoc(generatedMatrix, 'ma_tran_de_kiem_tra')}
+            onClick={() => exportHtmlToDocx(generatedMatrix, 'ma_tran_de_kiem_tra.docx', { orientation: 'landscape', title: 'Ma trận đề kiểm tra' })}
             disabled={!generatedMatrix}
-            className="flex items-center gap-2 bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed shadow-sm"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" /></svg>
-            Xuất Word
+            Xuất Word (.docx)
           </button>
           <button 
             disabled 
